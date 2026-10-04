@@ -114,3 +114,117 @@ fn estimate_media(b: &Value) -> u64 {
     }
     tokens
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn empty_body_counts_one() {
+        assert_eq!(estimate_tokens(&json!({})), 1);
+    }
+
+    #[test]
+    fn system_string_adds_wrapper_overhead() {
+        // "abcd" is 4 chars -> 1 token, plus the 3-token system wrapper.
+        assert_eq!(estimate_tokens(&json!({"system": "abcd"})), 4);
+    }
+
+    #[test]
+    fn system_array_counts_text_blocks() {
+        // 8 chars -> 2 tokens, plus the wrapper.
+        let body = json!({"system": [{"type": "text", "text": "abcdefgh"}]});
+        assert_eq!(estimate_tokens(&body), 5);
+    }
+
+    #[test]
+    fn system_counts_chars_not_bytes() {
+        // 8 chars (16 bytes in UTF-8) -> 2 tokens, plus the wrapper.
+        let body = json!({"system": "éééééééé"});
+        assert_eq!(estimate_tokens(&body), 5);
+    }
+
+    #[test]
+    fn string_message_has_per_message_overhead() {
+        // "hi" is 2 chars -> min 1 token, plus 3 per message.
+        let body = json!({"messages": [{"role": "user", "content": "hi"}]});
+        assert_eq!(estimate_tokens(&body), 4);
+    }
+
+    #[test]
+    fn text_blocks_count_by_chars() {
+        // "hello world!" is 12 chars -> 3 tokens, plus 3 per message.
+        let body = json!({"messages": [{"role": "user", "content": [
+            {"type": "text", "text": "hello world!"}
+        ]}]});
+        assert_eq!(estimate_tokens(&body), 6);
+    }
+
+    #[test]
+    fn tool_use_block_has_fixed_cost() {
+        let body = json!({"messages": [{"role": "user", "content": [
+            {"type": "tool_use", "id": "t1", "name": "Read", "input": {}}
+        ]}]});
+        assert_eq!(estimate_tokens(&body), 3 + 8);
+    }
+
+    #[test]
+    fn tool_result_counts_fixed_overhead() {
+        // `text_of` lê a chave `text` do bloco: `content` em array não é
+        // percorrido, então só entram overhead da mensagem + 4 do bloco.
+        let body = json!({"messages": [{"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": [
+                {"type": "text", "text": "ok"}
+            ]}
+        ]}]});
+        assert_eq!(estimate_tokens(&body), 3 + 4);
+    }
+
+    #[test]
+    fn image_block_prices_base64_payload() {
+        // 1200 bytes of base64 -> 800 base + (1200/4)/3 payload, plus message.
+        let data = "A".repeat(1200);
+        let body = json!({"messages": [{"role": "user", "content": [
+            {"type": "image", "source": {"type": "base64", "data": data}}
+        ]}]});
+        assert_eq!(estimate_tokens(&body), 3 + 800 + 100);
+    }
+
+    #[test]
+    fn document_block_is_cheaper_than_image() {
+        let data = "A".repeat(120);
+        let body = json!({"messages": [{"role": "user", "content": [
+            {"type": "document", "source": {"type": "base64", "data": data}}
+        ]}]});
+        assert_eq!(estimate_tokens(&body), 3 + 400 + 10);
+    }
+
+    #[test]
+    fn image_url_counts_chars() {
+        // "http://x" is 8 chars -> 2 tokens on top of the 800 base + message.
+        let body = json!({"messages": [{"role": "user", "content": [
+            {"type": "image", "source": {"type": "url", "url": "http://x"}}
+        ]}]});
+        assert_eq!(estimate_tokens(&body), 3 + 800 + 2);
+    }
+
+    #[test]
+    fn unknown_block_kinds_are_free() {
+        let body = json!({"messages": [{"role": "user", "content": [
+            {"type": "thinking", "thinking": "hmm"}
+        ]}]});
+        assert_eq!(estimate_tokens(&body), 3);
+    }
+
+    #[test]
+    fn tools_add_wrapper_name_description_and_schema() {
+        // wrapper 4 + "Read" 1 + "Read a file" (11 chars) 2 + schema 17/4 = 4.
+        let body = json!({"tools": [{
+            "name": "Read",
+            "description": "Read a file",
+            "input_schema": {"type": "object"}
+        }]});
+        assert_eq!(estimate_tokens(&body), 4 + 1 + 2 + 4);
+    }
+}

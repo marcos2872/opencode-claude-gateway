@@ -8,6 +8,7 @@
 
 use axum::{
     extract::State,
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
@@ -838,4 +839,76 @@ async fn codex_chat_stream_tool_args_survive_single_chunk() {
         "tool arguments must survive the stream translation: {text}"
     );
     assert!(text.contains("response.completed"), "{text}");
+}
+
+// ---------------------------------------------------------------------------
+// Cobertura: erro upstream no path traduzido (shape OpenAI) e identidade do
+// default no fallback (`requested == default_model`).
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn codex_translated_chat_upstream_error_is_openai_shape() {
+    // Upstream Chat 500 no path traduzido: o edge responde o shape OpenAI
+    // com o mesmo HTTP, nunca o shape Anthropic.
+    let app = Router::new().route(
+        "/chat/completions",
+        post(|| async {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {
+                    "message": "upstream exploded",
+                    "type": "server_error",
+                    "code": null
+                }})),
+            )
+                .into_response()
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let state = seeded_state(
+        test_config(),
+        vec![mock_entry(&base, CHAT_PKG, "mock-chat")],
+        vec![alias("claude-cx", "opencode/mock-chat")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let mut body = codex_body("claude-cx");
+    body["stream"] = json!(false);
+    let resp = server
+        .post("/v1/responses")
+        .add_header("authorization", format!("Bearer {TOKEN}"))
+        .json(&body)
+        .await;
+    assert_eq!(resp.status_code(), 500);
+    let v: Value = resp.json();
+    assert!(v.get("type").is_none(), "{v}");
+    assert_eq!(v["error"]["message"], "upstream exploded");
+}
+
+#[tokio::test]
+async fn codex_default_model_identity_skips_fallback() {
+    // Pedir o próprio `default_model` retorna direto, sem fallback nem warn.
+    let mock = MockUpstream::default();
+    let base = spawn_mock(mock.clone()).await;
+    let mut config = test_config();
+    config.default_model = "claude-cx".to_string();
+    let state = seeded_state(
+        config,
+        vec![mock_entry(&base, RESPONSES_PKG, "mock-resp")],
+        vec![alias("claude-cx", "opencode/mock-resp")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let mut body = codex_body("claude-cx");
+    body["stream"] = json!(false);
+    let resp = server
+        .post("/v1/responses")
+        .add_header("authorization", format!("Bearer {TOKEN}"))
+        .json(&body)
+        .await;
+    assert_eq!(resp.status_code(), 200);
 }

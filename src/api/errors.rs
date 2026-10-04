@@ -339,4 +339,59 @@ mod tests {
         assert_eq!(v["error"]["message"], "not json at all");
         assert!(v["error"].get("code").is_none());
     }
+
+    #[tokio::test]
+    async fn upstream_error_response_maps_status_to_anthropic_type() {
+        for (status, expected) in [
+            (StatusCode::BAD_REQUEST, "invalid_request_error"),
+            (StatusCode::UNPROCESSABLE_ENTITY, "invalid_request_error"),
+            (StatusCode::UNAUTHORIZED, "authentication_error"),
+            (StatusCode::FORBIDDEN, "authentication_error"),
+            (StatusCode::NOT_FOUND, "not_found_error"),
+            (StatusCode::TOO_MANY_REQUESTS, "rate_limit_error"),
+            (StatusCode::INTERNAL_SERVER_ERROR, "api_error"),
+            (StatusCode::BAD_GATEWAY, "api_error"),
+        ] {
+            let resp = upstream_error_response(status, "upstream said no");
+            assert_eq!(resp.status(), status);
+            let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+                .await
+                .unwrap();
+            let v: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(v["type"], "error");
+            assert_eq!(v["error"]["type"], expected, "{status}");
+            assert_eq!(v["error"]["message"], "upstream said no");
+        }
+    }
+
+    #[test]
+    fn response_failure_message_picks_known_shapes() {
+        assert_eq!(
+            response_failure_message(&json!({"response": {"error": {"message": "bad key"}}}),),
+            "upstream response failed: bad key",
+        );
+        assert_eq!(
+            response_failure_message(&json!({"response": {"error": "oops"}})),
+            "upstream response failed: oops",
+        );
+        assert_eq!(
+            response_failure_message(
+                &json!({"response": {"incomplete_details": {"reason": "max_tokens"}}}),
+            ),
+            "upstream response failed: max_tokens",
+        );
+        // Legacy shape without the `response` wrapper.
+        assert_eq!(
+            response_failure_message(&json!({"error": {"message": "m"}})),
+            "upstream response failed: m",
+        );
+        assert_eq!(
+            response_failure_message(&json!({"response": {}})),
+            "upstream response failed",
+        );
+        assert_eq!(
+            response_failure_message(&json!({"response": {"error": {"message": ""}}})),
+            "upstream response failed",
+        );
+    }
 }
