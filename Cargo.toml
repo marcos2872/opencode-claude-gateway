@@ -1,6 +1,6 @@
 [package]
 name = "opencode-claude-gateway"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 description = "Local Anthropic-compatible gateway exposing OpenCode models to Claude Code"
 license = "MIT"
