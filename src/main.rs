@@ -1,5 +1,5 @@
 use clap::Parser;
-use opencode_claude_gateway::{api, cli, config, daemon, infra};
+use opencode_claude_gateway::{api, autostart, cli, config, daemon, infra};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -16,11 +16,17 @@ async fn main() -> anyhow::Result<()> {
         cfg.port = p;
     }
 
+    if cli.start {
+        return daemon::start(cfg.port, cli.config);
+    }
+    if cli.stop {
+        return daemon::stop();
+    }
     if cli.enable {
-        return daemon::enable(cfg.port, cli.config);
+        return autostart::enable(cli.config);
     }
     if cli.disable {
-        return daemon::disable();
+        return autostart::disable();
     }
     if cli.status {
         return daemon::status();
@@ -46,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
     // No flag: show status + hint.
     daemon::status()?;
     println!();
-    println!("usage: ocg --enable | --disable | --status | --serve");
+    println!("usage: ocg --start | --stop | --enable | --disable | --status | --serve");
     Ok(())
 }
 
@@ -88,7 +94,7 @@ async fn serve(cfg: config::AppConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// SIGTERM (from `--disable`) and Ctrl-C drain in-flight SSE streams.
+/// SIGTERM (from `--stop`) and Ctrl-C drain in-flight SSE streams.
 async fn shutdown_signal() {
     #[cfg(unix)]
     {

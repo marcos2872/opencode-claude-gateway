@@ -84,11 +84,15 @@ flowchart LR
 
 ## Daemon e ciclo de vida
 
-- `ocg --enable` escreve pidfile/porta/sessão em
+- `ocg --start` escreve pidfile/porta/sessão em
   `~/.local/share/opencode-claude-gateway/` (arquivos `0600` via `daemon::write_private`)
   e spawna o filho com `--daemon-child`.
-- `--disable` envia SIGTERM (drena os streams SSE em andamento) e limpa o estado.
+- `--stop` envia SIGTERM (drena os streams SSE em andamento) e limpa o estado.
 - `--status` reporta se o daemon está rodando, em qual porta e o session id.
+- `ocg --enable` / `--disable` gerenciam o auto-start no login via systemd
+  user service (`autostart.rs`, unit `~/.config/systemd/user/ocg.service`,
+  `ExecStart=<bin> --serve`): instala/remove a unit e o symlink `enabled`,
+  sem subir nem derrubar o gateway — separação estrita de `--start`/`--stop`.
 
 ## Limites conhecidos
 
@@ -97,7 +101,7 @@ flowchart LR
   para `{baseURL}/messages/count_tokens` (com fallback na estimativa se o upstream falhar).
 - Modelos free-tier `opencode/*` são bloqueados no upstream fora do OpenCode (ocultos por padrão).
 - `ocg.log` é só-append: trunque de vez em quando (`: > ocg.log`).
-- `--enable` recusa uma `--port` diferente com ele rodando; dê `--disable` antes.
+- `--start` recusa uma `--port` diferente com ele rodando; dê `--stop` antes.
 
 ## Documentação relacionada
 

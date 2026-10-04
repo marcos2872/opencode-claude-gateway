@@ -474,7 +474,7 @@ p code,li code,td code,dd code,.lede code{
           <h3>Baixe da última release</h3>
           <p>Ou compile localmente com <code class="mono">cargo install --path .</code>.</p>
           <div class="term" style="margin-top:1rem">
-            <div class="term-h"><span>shell</span><button class="copy" type="button" data-copy="ocg --enable">copiar</button></div>
+            <div class="term-h"><span>shell</span><button class="copy" type="button" data-copy="ocg --start">copiar</button></div>
             <pre><span class="c">$</span> URL=$(gh release view --repo marcos2872/opencode-claude-gateway --json assets --jq <span class="s">'.assets[] | select(.name=="ocg-linux-x86_64") | .url'</span>)
 <span class="c">$</span> curl -L <span class="s">"$URL"</span> -o /tmp/ocg
 <span class="c">$</span> install -m 0755 /tmp/ocg ~/.local/bin/ocg
@@ -489,12 +489,12 @@ p code,li code,td code,dd code,.lede code{
           <h3>Rode como daemon em background</h3>
           <p>O catálogo é lido no boot em background (com retry); <code class="mono">/health</code> fica <code class="mono">starting</code> até o primeiro load.</p>
           <div class="term" style="margin-top:1rem">
-            <div class="term-h"><span>shell</span><button class="copy" type="button" data-copy="ocg --enable">copiar</button></div>
-            <pre><span class="c">$</span> <span class="k">ocg</span> --enable
+            <div class="term-h"><span>shell</span><button class="copy" type="button" data-copy="ocg --start">copiar</button></div>
+            <pre><span class="c">$</span> <span class="k">ocg</span> --start
 <span class="c">$</span> <span class="k">ocg</span> --status
 <span class="c">$</span> curl -s http://127.0.0.1:3737/health</pre>
           </div>
-          <p>Porta custom: <code class="mono">ocg --enable --port 3740</code>. Com ele rodando, trocar de porta exige <code class="mono">--disable</code> antes. Logs em <code class="mono">~/.local/share/opencode-claude-gateway/ocg.log</code>. Prévia do catálogo sem subir: <code class="mono">ocg --refresh</code>.</p>
+          <p>Porta custom: <code class="mono">ocg --start --port 3740</code>. Com ele rodando, trocar de porta exige <code class="mono">--stop</code> antes. Logs em <code class="mono">~/.local/share/opencode-claude-gateway/ocg.log</code>. Prévia do catálogo sem subir: <code class="mono">ocg --refresh</code>.</p>
         </div>
         <div class="field">
           <div class="tag"><i>passo 4</i> <span>· escolha o modelo no cliente</span></div>
@@ -562,9 +562,9 @@ claude</pre>
             <div class="term">
               <div class="term-h">
                 <span>shell — permissões exigidas + reinício</span>
-                <button class="copy" type="button" data-copy="ocg --enable">copiar</button>
+                <button class="copy" type="button" data-copy="ocg --start">copiar</button>
               </div>
-              <pre><span class="c">$</span> <span class="k">ocg</span> --enable <span class="c"># ex.: http://127.0.0.1:3737</span>
+              <pre><span class="c">$</span> <span class="k">ocg</span> --start <span class="c"># ex.: http://127.0.0.1:3737</span>
 <span class="c">$</span> sudo chown root:root /etc/claude-desktop/managed-settings.json
 <span class="c">$</span> sudo chmod 0644 /etc/claude-desktop/managed-settings.json <span class="c"># 0600 dá EACCES; o app lê como seu usuário</span>
 <span class="c">$</span> sudo chmod 0755 /etc/claude-desktop</pre>
@@ -581,7 +581,7 @@ claude</pre>
   <section class="band" id="configurar">
     <div class="wrap">
       <h2 class="d-l">Configurar</h2>
-      <p class="lede">Arquivo em <code class="mono">~/.config/opencode-claude-gateway/config.toml</code> (exemplo completo em <code class="mono">config.example.toml</code>). Overrides: <code class="mono">--port</code> / <code class="mono">OCG_PORT</code>, <code class="mono">--config</code> / <code class="mono">OCG_CONFIG</code>, <code class="mono">OCG_AUTH_TOKEN</code> (não-vazio sobrescreve o arquivo). O config é lido no boot — trocar exige reiniciar (<code class="mono">--disable</code> + <code class="mono">--enable</code>). Arquivo inválido é erro fatal, não default silencioso.</p>
+      <p class="lede">Arquivo em <code class="mono">~/.config/opencode-claude-gateway/config.toml</code> — <b>criado automaticamente no primeiro run</b> com todas as opções comentadas (descomente e edite; exemplo completo em <code class="mono">config.example.toml</code>). Overrides: <code class="mono">--port</code> / <code class="mono">OCG_PORT</code>, <code class="mono">--config</code> / <code class="mono">OCG_CONFIG</code>, <code class="mono">OCG_AUTH_TOKEN</code> (não-vazio sobrescreve o arquivo). O config é lido no boot — trocar exige reiniciar (<code class="mono">--stop</code> + <code class="mono">--start</code>). Arquivo inválido é erro fatal, não default silencioso.</p>
 
       <div class="translate spec">
         <div class="translate-h">
@@ -625,9 +625,11 @@ claude</pre>
             </tr>
           </thead>
           <tbody>
-            <tr><td>--enable [--port N]</td><td>daemon</td><td>Sobe o filho destacado com <code>--serve</code>, espera <code>/health</code> e imprime os <code>export</code> do Claude Code. Estado em <code>~/.local/share/opencode-claude-gateway/</code> (<code>ocg.pid</code>, <code>ocg.port</code>, <code>ocg.session</code>, <code>ocg.log</code>, todos 0600).</td></tr>
-            <tr><td>--disable</td><td>daemon</td><td>Envia SIGTERM (drena streams SSE) e limpa o estado.</td></tr>
-            <tr><td>--status</td><td>daemon</td><td>Diz se está rodando, em qual porta e se responde.</td></tr>
+            <tr><td>--start [--port N]</td><td>daemon</td><td>Sobe o filho destacado com <code>--serve</code>, espera <code>/health</code> e imprime os <code>export</code> do Claude Code. Estado em <code>~/.local/share/opencode-claude-gateway/</code> (<code>ocg.pid</code>, <code>ocg.port</code>, <code>ocg.session</code>, <code>ocg.log</code>, todos 0600).</td></tr>
+            <tr><td>--stop</td><td>daemon</td><td>Envia SIGTERM (drena streams SSE) e limpa o estado.</td></tr>
+            <tr><td>--status</td><td>daemon</td><td>Diz se está rodando, em qual porta, se responde, e se o auto-start está ligado.</td></tr>
+            <tr><td>--enable</td><td>auto-start</td><td>Instala e habilita o systemd user service (sobe no login). Não inicia o gateway agora.</td></tr>
+            <tr><td>--disable</td><td>auto-start</td><td>Remove o auto-start. Não para um gateway que está rodando.</td></tr>
             <tr><td>--serve</td><td>foreground</td><td>Servidor em primeiro plano (dev + filho do daemon).</td></tr>
             <tr><td>--refresh</td><td>prévia</td><td>Imprime o catálogo que o boot carregaria (N modelos + aliases) e sai.</td></tr>
           </tbody>
@@ -674,7 +676,7 @@ claude</pre>
         </div>
       </div>
 
-      <div class="note"><b>Regra de ouro:</b> catálogo é lido <b>uma vez no boot</b> (com até 6 tentativas e backoff 2s → 16s enquanto vier vazio). Sem refresh automático — modelo novo/removido ou <code class="mono">opencode auth</code> novo pede <code class="mono">ocg --disable && ocg --enable</code>. <code class="mono">--refresh</code> só pré-visualiza.</div>
+      <div class="note"><b>Regra de ouro:</b> catálogo é lido <b>uma vez no boot</b> (com até 6 tentativas e backoff 2s → 16s enquanto vier vazio). Sem refresh automático — modelo novo/removido ou <code class="mono">opencode auth</code> novo pede <code class="mono">ocg --stop && ocg --start</code>. <code class="mono">--refresh</code> só pré-visualiza.</div>
     </div>
   </section>
 

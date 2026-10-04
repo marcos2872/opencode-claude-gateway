@@ -28,7 +28,12 @@ failing tests (admins may still push directly). An opt-in pre-commit hook
 (`.githooks/pre-commit`, same three commands) is enabled per clone with
 `git config core.hooksPath .githooks`.
 
-Daemon lifecycle: `ocg --enable [--port PORT] | --disable | --status`. Configuration is loaded from `~/.config/opencode-claude-gateway/config.toml` (or `--config`/`OCG_CONFIG`), with `OCG_PORT` and `OCG_AUTH_TOKEN` overrides. State files
+Daemon lifecycle: `ocg --start [--port PORT] | --stop | --status`. Auto-start
+on login is separate: `ocg --enable` / `--disable` install/remove a systemd
+user service (`src/autostart.rs`, unit `~/.config/systemd/user/ocg.service`,
+`ExecStart=<bin> --serve`); strict separation — they never start/stop a
+running gateway and `--start`/`--stop` never touch auto-start. Configuration is loaded from `~/.config/opencode-claude-gateway/config.toml` (or `--config`/`OCG_CONFIG`), with `OCG_PORT` and `OCG_AUTH_TOKEN` overrides; first run at the
+default path seeds a fully-commented `CONFIG_TEMPLATE` (`src/config.rs`, 0600). State files
 (pid, port, session id, log) live in `~/.local/share/opencode-claude-gateway/` and are
 created 0600 via `daemon::write_private`.
 

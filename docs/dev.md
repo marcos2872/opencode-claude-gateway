@@ -161,7 +161,7 @@ boot, então após mudar aliases/código:
 ```bash
 # 1. Gateway com catálogo fresco (mata o --serve antigo e sobe de novo)
 curl -s http://127.0.0.1:3737/health  # confira "models" != 0
-# daemon: ocg --disable && ocg --enable
+# daemon: ocg --stop && ocg --start
 # foreground: cargo run -- --serve --port 3737
 
 # 2. Confere o novo mapeamento (zero dup, fast com alias próprio)
@@ -200,9 +200,11 @@ git push origin v0.1.0   # a action builda e anexa o binário à release
 ## Daemon
 
 ```bash
-ocg --enable [--port 3737]   # pidfile ~/.local/share/opencode-claude-gateway/ocg.pid
+ocg --start [--port 3737]   # pidfile ~/.local/share/opencode-claude-gateway/ocg.pid
 ocg --status
-ocg --disable
+ocg --stop
+ocg --enable                # auto-start no login (systemd user service)
+ocg --disable               # remove o auto-start
 ```
 
 Logs: `~/.local/share/opencode-claude-gateway/ocg.log`.

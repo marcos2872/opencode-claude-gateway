@@ -19,7 +19,7 @@ managed lido no boot.
 
 ## Como configurar no Linux (sem menu)
 
-1. Subir o daemon: `ocg --enable` (ex.: `http://127.0.0.1:3737`).
+1. Subir o daemon: `ocg --start` (ex.: `http://127.0.0.1:3737`).
 2. Criar `/etc/claude-desktop/managed-settings.json`:
 ```json
 {
@@ -83,8 +83,8 @@ dessa lista caem — sobram os 11 cujos nomes escapam (`opus`, `sonnet`,
 (`inferenceModels`) passam pelo mesmo filtro, então não adianta listar lá.
 
 Para listar tudo, ative a evasão no ocg. No
-`~/.config/opencode-claude-gateway/config.toml` (cria se não existir — o gateway lê no
-boot, então reinicie depois):
+`~/.config/opencode-claude-gateway/config.toml` (criado automaticamente no
+primeiro run — edite e reinicie depois):
 
 ```toml
 port = 3737

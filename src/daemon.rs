@@ -1,4 +1,5 @@
-//! Daemon lifecycle: --enable / --disable / --status.
+//! Daemon lifecycle: --start / --stop / --status.
+//! (Auto-start on login is systemd's job: see `autostart`, --enable/--disable.)
 //!
 //! pidfile: ~/.local/share/opencode-claude-gateway/ocg.pid
 //! portfile: ~/.local/share/opencode-claude-gateway/ocg.port
@@ -87,15 +88,15 @@ pub fn stored_port() -> Option<u16> {
     fs::read_to_string(port_file()).ok()?.trim().parse().ok()
 }
 
-/// Enable: spawn detached child running `--serve`, wait for /health.
-pub fn enable(port: u16, config_arg: Option<PathBuf>) -> anyhow::Result<()> {
+/// Start: spawn detached child running `--serve`, wait for /health.
+pub fn start(port: u16, config_arg: Option<PathBuf>) -> anyhow::Result<()> {
     if let Some(pid) = read_pid() {
         if pid_alive(pid) {
             let running = stored_port().unwrap_or(crate::config::DEFAULT_PORT);
             if running != port {
                 anyhow::bail!(
                     "ocg already running on :{running} (pid {pid}); \
-                     run `ocg --disable` first to move it to :{port}"
+                     run `ocg --stop` first to move it to :{port}"
                 );
             }
             println!("ocg already running (pid {pid}, port {running})");
@@ -152,7 +153,7 @@ pub fn enable(port: u16, config_arg: Option<PathBuf>) -> anyhow::Result<()> {
         std::thread::sleep(std::time::Duration::from_millis(200));
         if gateway_healthy(port) {
             println!(
-                "ocg enabled on http://127.0.0.1:{port} (pid {})",
+                "ocg started on http://127.0.0.1:{port} (pid {})",
                 child.id()
             );
             print_next_steps(port);
@@ -170,8 +171,8 @@ pub fn enable(port: u16, config_arg: Option<PathBuf>) -> anyhow::Result<()> {
     )
 }
 
-/// Disable: SIGTERM the pidfile process, clean up.
-pub fn disable() -> anyhow::Result<()> {
+/// Stop: SIGTERM the pidfile process, clean up.
+pub fn stop() -> anyhow::Result<()> {
     let Some(pid) = read_pid() else {
         println!("ocg is not running (no pidfile)");
         return Ok(());
@@ -202,7 +203,7 @@ pub fn disable() -> anyhow::Result<()> {
     }
     let _ = fs::remove_file(pid_file());
     let _ = fs::remove_file(port_file());
-    println!("ocg disabled (pid {pid} stopped)");
+    println!("ocg stopped (pid {pid} stopped)");
     Ok(())
 }
 
@@ -220,6 +221,12 @@ pub fn status() -> anyhow::Result<()> {
         Some(pid) => println!("ocg pidfile exists but pid {pid} is dead"),
         None => println!("ocg is not running"),
     }
+    let auto = if crate::autostart::is_installed() {
+        "enabled"
+    } else {
+        "disabled"
+    };
+    println!("auto-start: {auto}");
     Ok(())
 }
 

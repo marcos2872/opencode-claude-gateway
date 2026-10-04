@@ -5,12 +5,13 @@ Gateway local compatível com Anthropic que expõe seus **modelos do OpenCode** 
 - Escuta **apenas em `127.0.0.1`** e nunca fala com a API da Anthropic: o upstream é o backend Go/Console do OpenCode.
 - Reutiliza o **login do OpenCode** já existente na máquina (lê a credencial do SQLite, em memória).
 - Traduz Anthropic Messages ↔ upstream (passthrough Anthropic, OpenAI Chat Completions ou Responses API, conforme o modelo).
-- Roda como daemon em background com `--enable` / `--status` / `--disable`.
+- Roda como daemon em background com `--start` / `--status` / `--stop`; `--enable` / `--disable` ligam o auto-start no login (systemd user service).
 
 ```bash
-ocg --enable    # inicia em background
+ocg --start    # inicia em background
 ocg --status
-ocg --disable   # para
+ocg --stop     # para
+ocg --enable   # auto-start no login (opcional)
 ```
 
 ## Como funciona
@@ -51,11 +52,26 @@ ocg --version
 > `cargo install --git https://github.com/marcos2872/opencode-claude-gateway` (instalação
 > a partir do código — veja [Desenvolvimento](docs/dev.md)).
 
-Depois de instalar, crie o `~/.config/opencode-claude-gateway/config.toml` e aponte seu
-cliente para o gateway:
+No primeiro run o `~/.config/opencode-claude-gateway/config.toml` é criado
+automaticamente com **todas as opções comentadas** — descomente e edite o que
+precisar. Aponte seu cliente para o gateway:
 
 - **Claude Code (CLI):** [Configuração no CLI](docs/config-cli.md)
 - **Claude Desktop:** [Configuração no Desktop](docs/config-desktop.md)
+
+### Migrando do `frank-opencode`
+
+Troca limpa, sem fallback: pare o daemon antigo, mova o config e suba o novo.
+
+```bash
+frank-opencode --disable
+mkdir -p ~/.config/opencode-claude-gateway
+mv ~/.config/frank-opencode/config.toml ~/.config/opencode-claude-gateway/config.toml
+ocg --start
+```
+
+(`FRANK_PORT`/`FRANK_CONFIG`/`FRANK_AUTH_TOKEN` viraram `OCG_*`; o state foi de
+`~/.local/share/frank-opencode/` para `~/.local/share/opencode-claude-gateway/`.)
 
 ## Segurança
 
