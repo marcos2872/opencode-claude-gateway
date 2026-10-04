@@ -9,13 +9,13 @@ como o gateway resolve modelos e aliases.
 
 ## Arquivo e overrides
 
-Arquivo: `~/.config/frank-opencode/config.toml` (veja
+Arquivo: `~/.config/opencode-claude-gateway/config.toml` (veja
 [`config.example.toml`](../config.example.toml)).
-Overrides por env: `FRANK_PORT`, `FRANK_AUTH_TOKEN`, `FRANK_CONFIG`.
-`FRANK_AUTH_TOKEN` (quando não-vazio) sobrescreve o `auth_token` do arquivo.
+Overrides por env: `OCG_PORT`, `OCG_AUTH_TOKEN`, `OCG_CONFIG`.
+`OCG_AUTH_TOKEN` (quando não-vazio) sobrescreve o `auth_token` do arquivo.
 
 O config é lido **no boot** — mudanças exigem reiniciar o gateway
-(`frank-opencode --disable && frank-opencode --enable`).
+(`ocg --disable && ocg --enable`).
 
 ## Autenticação do gateway (`auth_token`)
 
@@ -27,19 +27,19 @@ Por padrão `auth_token = ""`: o gateway aceita qualquer credencial
 openssl rand -hex 32
 
 # 2. Salve no config do gateway
-mkdir -p ~/.config/frank-opencode
-# edite ~/.config/frank-opencode/config.toml:
+mkdir -p ~/.config/opencode-claude-gateway
+# edite ~/.config/opencode-claude-gateway/config.toml:
 #   auth_token = "SEU_TOKEN_AQUI"
 
 # 3. Reinicie o gateway para valer (o config é lido no boot)
-frank-opencode --disable
-frank-opencode --enable   # ou --enable --port XXXX se usa porta custom
+ocg --disable
+ocg --enable   # ou --enable --port XXXX se usa porta custom
 
 # 4. Use o MESMO valor no Claude Code (ver docs/config-cli.md)
 export ANTHROPIC_AUTH_TOKEN="SEU_TOKEN_AQUI"
 ```
 
-Alternativa sem editar arquivo (teste / efêmero): exporte `FRANK_AUTH_TOKEN`
+Alternativa sem editar arquivo (teste / efêmero): exporte `OCG_AUTH_TOKEN`
 antes do `--enable` — ele sobrescreve o arquivo e é herdado pelo daemon filho.
 
 Regras:
@@ -53,7 +53,7 @@ Regras:
 ## Modelo padrão (`default_model`)
 
 Quando o cliente POSTa sem `"model"`, o gateway usa o `default_model` do
-`~/.config/frank-opencode/config.toml` — **não** o `model` do
+`~/.config/opencode-claude-gateway/config.toml` — **não** o `model` do
 `~/.claude/settings.json` (um diz o que o gateway usa no fallback, o outro
 o que o Claude pede). Vazio = primeiro alias em ordem alfabética, que hoje
 costuma ser um `claude-github-copilot-...` (`g` < `o`), não o seu modelo de

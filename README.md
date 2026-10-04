@@ -1,4 +1,4 @@
-# frank-opencode
+# opencode-claude-gateway
 
 Gateway local compatível com Anthropic que expõe seus **modelos do OpenCode** (v2) ao **Claude Code** — sem precisar de uma chave da Anthropic.
 
@@ -8,9 +8,9 @@ Gateway local compatível com Anthropic que expõe seus **modelos do OpenCode** 
 - Roda como daemon em background com `--enable` / `--status` / `--disable`.
 
 ```bash
-frank-opencode --enable    # inicia em background
-frank-opencode --status
-frank-opencode --disable   # para
+ocg --enable    # inicia em background
+ocg --status
+ocg --disable   # para
 ```
 
 ## Como funciona
@@ -22,7 +22,7 @@ frank-opencode --disable   # para
 | Modelos de pacote Anthropic (MiniMax, Qwen…) | Passthrough de bytes para `{baseURL}/messages` (`anthropic-version`/`anthropic-beta` repassados). |
 | Modelos OpenAI-compatible (Kimi, GLM, DeepSeek…) | Traduzidos para `{baseURL}/chat/completions` e de volta, incl. `tool_use`/`tool_result`, imagens, streaming SSE. |
 | Modelos Responses-API (linhas Go GPT/Grok/Muse) | Traduzidos para `{baseURL}/responses` e de volta, incl. function calls e streaming. |
-| Roteamento do OpenCode Go | Repassa o header nativo de sessão do Claude Code + sempre envia `x-opencode-session` (fallback estável persistido no data dir); User-Agent distintivo `frank-opencode/x.y.z`. |
+| Roteamento do OpenCode Go | Repassa o header nativo de sessão do Claude Code + sempre envia `x-opencode-session` (fallback estável persistido no data dir); User-Agent distintivo `ocg/x.y.z`. |
 
 ## Instalação (release)
 
@@ -35,23 +35,23 @@ Baixe o binário da **última release** e instale:
 
 ```bash
 # 1. Obtenha a URL do binário mais recente
-URL=$(gh release view --repo marcos2872/frank-opencode --json assets \
-  --jq '.assets[] | select(.name=="frank-opencode-linux-x86_64") | .url')
+URL=$(gh release view --repo marcos2872/opencode-claude-gateway --json assets \
+  --jq '.assets[] | select(.name=="ocg-linux-x86_64") | .url')
 #    (sem gh instalado, copie o link direto da página da release)
 
 # 2. Baixe, torne executável e mova para o PATH
-curl -L "$URL" -o /tmp/frank-opencode
-install -m 0755 /tmp/frank-opencode ~/.local/bin/frank-opencode
+curl -L "$URL" -o /tmp/ocg
+install -m 0755 /tmp/ocg ~/.local/bin/ocg
 
 # 3. Confira a versão
-frank-opencode --version
+ocg --version
 ```
 
 > Caminho alternativo: `cargo install --path .` ou
-> `cargo install --git https://github.com/marcos2872/frank-opencode` (instalação
+> `cargo install --git https://github.com/marcos2872/opencode-claude-gateway` (instalação
 > a partir do código — veja [Desenvolvimento](docs/dev.md)).
 
-Depois de instalar, crie o `~/.config/frank-opencode/config.toml` e aponte seu
+Depois de instalar, crie o `~/.config/opencode-claude-gateway/config.toml` e aponte seu
 cliente para o gateway:
 
 - **Claude Code (CLI):** [Configuração no CLI](docs/config-cli.md)
@@ -60,7 +60,7 @@ cliente para o gateway:
 ## Segurança
 
 - Só escuta em `127.0.0.1`. DB aberto em `READ_ONLY`. Segredos ficam só em memória (`secrecy`), nunca logados.
-- Arquivos de estado (`frank.pid`, `frank.port`, `frank.session`, `frank.log`) criados com `0600`.
+- Arquivos de estado (`ocg.pid`, `ocg.port`, `ocg.session`, `ocg.log`) criados com `0600`.
 - Quando `auth_token` está setado, todo endpoint exceto `/health` o exige
   (`x-api-key` ou `Authorization: Bearer`) — veja
   [Configuração → auth_token](docs/configuracao.md#autenticação-do-gateway-auth_token).

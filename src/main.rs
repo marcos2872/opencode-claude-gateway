@@ -1,5 +1,5 @@
 use clap::Parser;
-use frank_opencode::{api, cli, config, daemon, infra};
+use opencode_claude_gateway::{api, cli, config, daemon, infra};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -46,14 +46,14 @@ async fn main() -> anyhow::Result<()> {
     // No flag: show status + hint.
     daemon::status()?;
     println!();
-    println!("usage: frank-opencode --enable | --disable | --status | --serve");
+    println!("usage: ocg --enable | --disable | --status | --serve");
     Ok(())
 }
 
 async fn serve(cfg: config::AppConfig) -> anyhow::Result<()> {
     let port = cfg.port;
     let db = infra::opencode::resolve_db_path(&cfg.opencode_bin);
-    tracing::info!(db = %db.display(), port, "starting frank-opencode");
+    tracing::info!(db = %db.display(), port, "starting ocg");
     let state = api::server::AppState::new(cfg, db);
 
     // Bind first so a stuck catalog fetch can't block boot; the catalog

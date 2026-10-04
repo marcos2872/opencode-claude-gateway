@@ -1,4 +1,4 @@
-//! Config file (~/.config/frank-opencode/config.toml) + env overrides.
+//! Config file (~/.config/opencode-claude-gateway/config.toml) + env overrides.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -173,14 +173,14 @@ impl AppConfig {
         if let Some(p) = explicit {
             return p;
         }
-        if let Ok(env) = std::env::var("FRANK_CONFIG") {
+        if let Ok(env) = std::env::var("OCG_CONFIG") {
             if !env.is_empty() {
                 return PathBuf::from(env);
             }
         }
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("frank-opencode")
+            .join("opencode-claude-gateway")
             .join("config.toml")
     }
 
@@ -195,13 +195,13 @@ impl AppConfig {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
             Err(e) => return Err(format!("cannot read config {}: {e}", path.display())),
         };
-        // Env overrides (FRANK_PORT / FRANK_AUTH_TOKEN).
-        if let Ok(p) = std::env::var("FRANK_PORT") {
+        // Env overrides (OCG_PORT / OCG_AUTH_TOKEN).
+        if let Ok(p) = std::env::var("OCG_PORT") {
             if let Ok(n) = p.parse::<u16>() {
                 cfg.port = n;
             }
         }
-        if let Ok(t) = std::env::var("FRANK_AUTH_TOKEN") {
+        if let Ok(t) = std::env::var("OCG_AUTH_TOKEN") {
             if !t.is_empty() {
                 cfg.auth_token = t;
             }
@@ -212,7 +212,7 @@ impl AppConfig {
     pub fn data_dir() -> PathBuf {
         dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("frank-opencode")
+            .join("opencode-claude-gateway")
     }
 
     pub fn is_disabled(&self, opencode_ref: &str, gateway_id: &str) -> bool {
@@ -239,14 +239,14 @@ mod tests {
     #[test]
     fn missing_file_gives_defaults() {
         let cfg =
-            AppConfig::load(Some(PathBuf::from("/nonexistent-frank-test/config.toml"))).unwrap();
+            AppConfig::load(Some(PathBuf::from("/nonexistent-ocg-test/config.toml"))).unwrap();
         assert_eq!(cfg.port, DEFAULT_PORT);
         assert!(cfg.aliases.is_empty());
     }
 
     #[test]
     fn invalid_file_is_an_error_not_silent_defaults() {
-        let dir = std::env::temp_dir().join("frank-cfg-test");
+        let dir = std::env::temp_dir().join("ocg-cfg-test");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("bad.toml");
         std::fs::write(&path, "port = \"not-a-number\"\n").unwrap();
@@ -259,15 +259,15 @@ mod tests {
         let cfg: AppConfig = toml::from_str(
             r#"
 port = 4000
-default_model = "claude-sonnet-4-6-frank"
-[aliases."claude-sonnet-4-6-frank"]
+default_model = "claude-sonnet-4-6-ocg"
+[aliases."claude-sonnet-4-6-ocg"]
 opencode = "opencode-go/kimi-k2.7-code"
 "#,
         )
         .unwrap();
         assert_eq!(cfg.port, 4000);
         assert_eq!(
-            cfg.aliases["claude-sonnet-4-6-frank"].opencode,
+            cfg.aliases["claude-sonnet-4-6-ocg"].opencode,
             "opencode-go/kimi-k2.7-code"
         );
     }

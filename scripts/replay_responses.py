@@ -55,7 +55,7 @@ def send(body: dict, token: str) -> tuple[int, str]:
             "x-api-key": token,
             # Cloudflare rejects urllib's default UA with 403/1010; the
             # gateway sends this same one from reqwest.
-            "user-agent": "frank-opencode/0.2.2",
+            "user-agent": "ocg/0.2.2",
             # Required by the Go backend for routing (gateway always sends it).
             "x-opencode-session": "replay-diag-0001",
         },

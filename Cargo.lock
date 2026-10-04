@@ -478,34 +478,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "frank-opencode"
-version = "0.2.2"
-dependencies = [
- "anyhow",
- "async-stream",
- "axum",
- "axum-test",
- "clap",
- "dirs",
- "futures",
- "libc",
- "pretty_assertions",
- "reqwest",
- "rusqlite",
- "secrecy",
- "serde",
- "serde_json",
- "sysinfo",
- "tokio",
- "tokio-stream",
- "toml",
- "tower-http 0.5.2",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "futures"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1052,6 +1024,34 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
+name = "opencode-claude-gateway"
+version = "0.2.2"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "axum",
+ "axum-test",
+ "clap",
+ "dirs",
+ "futures",
+ "libc",
+ "pretty_assertions",
+ "reqwest",
+ "rusqlite",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tokio",
+ "tokio-stream",
+ "toml",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
 
 [[package]]
 name = "option-ext"

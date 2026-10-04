@@ -6,7 +6,7 @@
 # Lê do ambiente: PR_NUMBER (vazio em push → no-op), GH_TOKEN,
 # GITHUB_REPOSITORY, GITHUB_SERVER_URL, GITHUB_RUN_ID.
 #
-# O <marker> (ex.: `<!-- frank-ci-summary -->`) identifica o comentário no
+# O <marker> (ex.: `<!-- ocg-ci-summary -->`) identifica o comentário no
 # repo: se já existe um com esse marcador, ele é atualizado (PATCH) em vez de
 # acumular um por push. Marcadores diferentes convivem (um por job). Falhas do
 # `gh` viram warning — em PR de fork o token é read-only e o comentário é

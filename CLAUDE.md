@@ -21,20 +21,20 @@ PR. Steps use `continue-on-error` + a final `Propagar falha` step so the job
 summary and sticky PR comment (`.github/scripts/pr-sticky-comment.sh`) always
 publish even when steps fail. A separate `perf` job builds `--release` and
 enforces per-scenario p95 budgets (`tests/perf.rs`: protocol × input-shape
-matrix, 15ms light / 25ms heavy; `FRANK_PERF_P95_MS` overrides all; scenario
+matrix, 15ms light / 25ms heavy; `OCG_PERF_P95_MS` overrides all; scenario
 labels must stay `[a-z_]+` or the summary regex misses them). `main` is protected — the `test`
 check is required and the branch must be up to date, so a PR cannot merge with
 failing tests (admins may still push directly). An opt-in pre-commit hook
 (`.githooks/pre-commit`, same three commands) is enabled per clone with
 `git config core.hooksPath .githooks`.
 
-Daemon lifecycle: `frank-opencode --enable [--port PORT] | --disable | --status`. Configuration is loaded from `~/.config/frank-opencode/config.toml` (or `--config`/`FRANK_CONFIG`), with `FRANK_PORT` and `FRANK_AUTH_TOKEN` overrides. State files
-(pid, port, session id, log) live in `~/.local/share/frank-opencode/` and are
+Daemon lifecycle: `ocg --enable [--port PORT] | --disable | --status`. Configuration is loaded from `~/.config/opencode-claude-gateway/config.toml` (or `--config`/`OCG_CONFIG`), with `OCG_PORT` and `OCG_AUTH_TOKEN` overrides. State files
+(pid, port, session id, log) live in `~/.local/share/opencode-claude-gateway/` and are
 created 0600 via `daemon::write_private`.
 
 ## Architecture
 
-`frank-opencode` is a local Anthropic-compatible gateway that exposes OpenCode
+`opencode-claude-gateway` is a local Anthropic-compatible gateway that exposes OpenCode
 v2's models to Claude Code. It listens only on `127.0.0.1` and never talks to
 Anthropic — the upstream is the OpenCode Go/Console backend routed by provider
 package.
@@ -128,7 +128,7 @@ Layers:
   from `settings.apiKey` (`upstream_bearer`).
 - **Session headers**: forwarding to Go always sends `x-opencode-session`
   (client's `x-claude-code-session-id`, then `x-opencode-session`, else a
-  persisted fallback in `frank.session`).
+  persisted fallback in `ocg.session`).
 - **count_tokens**: Anthropic packages proxy to `{baseURL}/messages/count_tokens`
   with fallback to `estimate_tokens`; other packages always estimate locally.
   The proxy applies the resolved variant and the catalog body defaults so the

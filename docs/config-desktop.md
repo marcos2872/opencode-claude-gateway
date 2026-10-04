@@ -19,7 +19,7 @@ managed lido no boot.
 
 ## Como configurar no Linux (sem menu)
 
-1. Subir o daemon: `frank-opencode --enable` (ex.: `http://127.0.0.1:3737`).
+1. Subir o daemon: `ocg --enable` (ex.: `http://127.0.0.1:3737`).
 2. Criar `/etc/claude-desktop/managed-settings.json`:
 ```json
 {
@@ -32,7 +32,7 @@ managed lido no boot.
 }
 ```
 `inferenceGatewayApiKey` = valor do `auth_token` do gateway (ou qualquer
-placeholder se vazio). `bearer` e `x-api-key` são ambos aceitos pelo frank.
+placeholder se vazio). `bearer` e `x-api-key` são ambos aceitos pelo ocg.
 3. Permissões são eliminatórias (arquivo regular, `root:root`, sem escrita
    para grupo/outros — vale também para o diretório; se falhar, o app
    ignora o managed **e** desabilita o local). Atenção: `0600` **não**
@@ -61,7 +61,7 @@ sudo chmod 0755 /etc/claude-desktop
 
 Sobre a base URL: começa **sem** sufixo `/v1` (o app anexa `/v1/messages`
 sozinho; usar `127.0.0.1`, não `localhost`). Se der 404, olha nos logs do
-frank o path que chegou e ajusta.
+ocg o path que chegou e ajusta.
 
 ## Rota alternativa (builds oficiais Mac/Windows)
 
@@ -82,8 +82,8 @@ dessa lista caem — sobram os 11 cujos nomes escapam (`opus`, `sonnet`,
 `mai-code`, `hy4`, `muse-spark`, `space-bunny`). Listas explícitas
 (`inferenceModels`) passam pelo mesmo filtro, então não adianta listar lá.
 
-Para listar tudo, ative a evasão no frank. No
-`~/.config/frank-opencode/config.toml` (cria se não existir — o gateway lê no
+Para listar tudo, ative a evasão no ocg. No
+`~/.config/opencode-claude-gateway/config.toml` (cria se não existir — o gateway lê no
 boot, então reinicie depois):
 
 ```toml
@@ -166,11 +166,11 @@ chat intencional.
 
 - Desktop exige `POST /v1/messages` com streaming + tool use (obrigatório)
   e `GET /v1/models` (opcional, alimenta o picker via `modelDiscoveryEnabled`)
-  — o frank serve os dois.
+  — o ocg serve os dois.
 - HTTP em loopback é permitido (só host não-loopback exige HTTPS).
 - Aliases `claude-*` passam no filtro de descoberta — com `desktop_aliases`
   até os nomes bloqueados (`deepseek`, `kimi`, ...) listam (validados 51/51).
-- `ping` SSE a cada 20s no frank alimenta o watchdog do Desktop
+- `ping` SSE a cada 20s no ocg alimenta o watchdog do Desktop
   (`inferenceStreamIdleTimeoutSec`).
 
 ## Diagnóstico
@@ -188,7 +188,7 @@ grep -E "managed-settings|gateway|discovery|3p" ~/.config/Claude/logs/main.log |
 3. [x] Chat simples responde via kimi/minimax.
 4. [x] Aba Code do Desktop funciona (ela usa o mesmo gateway).
 5. [x] Modelos não-Anthropic atrás de alias `claude-*` funcionam (com `desktop_aliases`).
-6. [x] `cache_control`/betas experimentais: o frank traduz para
+6. [x] `cache_control`/betas experimentais: o ocg traduz para
    Chat/Responses no upstream.
 7. [x] Picker com tiers `sonnet`/`opus` via descoberta.
 8. [x] Cowork agents com acesso web.

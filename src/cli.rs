@@ -3,9 +3,9 @@
 use clap::Parser;
 use std::path::PathBuf;
 
-/// frank-opencode: Anthropic-compatible gateway for OpenCode models.
+/// ocg: Anthropic-compatible gateway for OpenCode models.
 #[derive(Debug, Parser)]
-#[command(name = "frank-opencode", version, about)]
+#[command(name = "ocg", version, about)]
 pub struct Cli {
     /// Start the background daemon (http://127.0.0.1:PORT).
     #[arg(long, conflicts_with_all = ["disable", "status", "serve", "refresh"])]
@@ -27,12 +27,12 @@ pub struct Cli {
     #[arg(long)]
     pub refresh: bool,
 
-    /// Port for the gateway. Overrides config file and FRANK_PORT.
-    #[arg(long, env = "FRANK_PORT")]
+    /// Port for the gateway. Overrides config file and OCG_PORT.
+    #[arg(long, env = "OCG_PORT")]
     pub port: Option<u16>,
 
-    /// Path to config.toml. Defaults to ~/.config/frank-opencode/config.toml.
-    #[arg(long, env = "FRANK_CONFIG")]
+    /// Path to config.toml. Defaults to ~/.config/opencode-claude-gateway/config.toml.
+    #[arg(long, env = "OCG_CONFIG")]
     pub config: Option<PathBuf>,
 
     /// Hidden: used internally by --enable to spawn the daemon child.

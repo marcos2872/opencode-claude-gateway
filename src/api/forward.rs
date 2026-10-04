@@ -333,11 +333,11 @@ pub(crate) async fn forward_anthropic(ctx: ForwardCtx<'_>) -> Response {
 }
 
 /// TEMP-DEBUG: dump the translated Responses body when
-/// `FRANK_DUMP_RESPONSES_BODY` is set (a directory, or `1` for the system temp
+/// `OCG_DUMP_RESPONSES_BODY` is set (a directory, or `1` for the system temp
 /// dir). One file per request, never committed. Remove after diagnosing the
 /// compact 400.
 fn dump_translated_body(resp_body: &Value, gateway_model: &str) {
-    let dir = match std::env::var("FRANK_DUMP_RESPONSES_BODY") {
+    let dir = match std::env::var("OCG_DUMP_RESPONSES_BODY") {
         Ok(v) if v != "1" && !v.is_empty() => std::path::PathBuf::from(v),
         Ok(_) => std::env::temp_dir(),
         Err(_) => return,
@@ -350,7 +350,7 @@ fn dump_translated_body(resp_body: &Value, gateway_model: &str) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let path = dir.join(format!("frank-resp-dump-{nanos}-{safe_model}.json"));
+    let path = dir.join(format!("ocg-resp-dump-{nanos}-{safe_model}.json"));
     match serde_json::to_string_pretty(resp_body) {
         Ok(text) => match std::fs::write(&path, text) {
             Ok(()) => {

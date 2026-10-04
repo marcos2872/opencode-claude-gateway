@@ -40,7 +40,7 @@ impl AppState {
             // stay open for many minutes.
             .connect_timeout(std::time::Duration::from_secs(config.connect_timeout_secs))
             .timeout(std::time::Duration::from_secs(config.request_timeout_secs))
-            .user_agent(format!("frank-opencode/{}", env!("CARGO_PKG_VERSION")))
+            .user_agent(format!("ocg/{}", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("http client");
         Self {
@@ -122,7 +122,7 @@ impl AppState {
                     description: a
                         .description
                         .clone()
-                        .unwrap_or_else(|| format!("via frank-opencode · {}", a.opencode)),
+                        .unwrap_or_else(|| format!("via ocg · {}", a.opencode)),
                     context_window: window,
                     family_tier: None,
                     family_default: false,

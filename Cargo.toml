@@ -1,16 +1,16 @@
 [package]
-name = "frank-opencode"
+name = "opencode-claude-gateway"
 version = "0.2.2"
 edition = "2021"
 description = "Local Anthropic-compatible gateway exposing OpenCode models to Claude Code"
 license = "MIT"
 
 [lib]
-name = "frank_opencode"
+name = "opencode_claude_gateway"
 path = "src/lib.rs"
 
 [[bin]]
-name = "frank-opencode"
+name = "ocg"
 path = "src/main.rs"
 
 [dependencies]

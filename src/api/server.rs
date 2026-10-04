@@ -101,7 +101,7 @@ async fn list_models(State(s): State<AppState>) -> impl IntoResponse {
                 "id": a.gateway_id,
                 "display_name": a.display_name,
                 "description": a.description,
-                "owned_by": "frank-opencode",
+                "owned_by": "ocg",
             });
             // Context window from the OpenCode catalog (`limit.context`).
             // Omitted when unknown so clients fall back to their default.
