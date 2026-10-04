@@ -8,11 +8,12 @@ use super::errors::{
 };
 use super::session::session_headers;
 use super::state::AppState;
-use crate::domain::CatalogEntry;
+use crate::domain::{protocol_for_entry, CatalogEntry, Protocol};
 use crate::infra::upstream::{
-    anthropic_to_openai, anthropic_to_responses, apply_variant, apply_variant_checked, join_url,
-    openai_to_anthropic, responses_sse_error, responses_to_anthropic, sse, sse_error,
-    with_heartbeat, ResponsesTranslator, StreamTranslator,
+    anthropic_to_openai, anthropic_to_responses, anthropic_to_responses_response, apply_variant,
+    apply_variant_checked, codex_custom_tool_names, join_url, openai_to_anthropic,
+    responses_sse_error, responses_to_anthropic, responses_to_anthropic_request, sse, sse_error,
+    with_heartbeat, ResponsesOutTranslator, ResponsesTranslator, StreamTranslator,
 };
 use axum::{
     body::Body,
@@ -265,6 +266,28 @@ where
             yield Ok(responses_sse_error(code, &message).into_bytes());
         }
     }
+}
+
+/// Extract the JSON payloads from whole SSE frames (the Chat bridge emits
+/// Anthropic frames from `StreamTranslator`; the Responses shaper wants the
+/// parsed events).
+fn payloads_from_frames(frames: &[String]) -> Vec<Value> {
+    let mut out = vec![];
+    for frame in frames {
+        for line in frame.lines() {
+            let Some(payload) = line.strip_prefix("data:") else {
+                continue;
+            };
+            let payload = payload.trim();
+            if payload.is_empty() || payload == "[DONE]" {
+                continue;
+            }
+            if let Ok(v) = serde_json::from_str::<Value>(payload) {
+                out.push(v);
+            }
+        }
+    }
+    out
 }
 
 /// The empty text-block start both translated streams emit when the upstream
@@ -632,6 +655,250 @@ pub(crate) async fn forward_responses_passthrough(ctx: ForwardCtx<'_>) -> Respon
         .bytes_stream()
         .map(|c| c.map(|b| b.to_vec()).map_err(std::io::Error::other));
     sse_stream_response(responses_terminal_claw(inner))
+}
+
+/// Fase 2: Codex edge on Chat/Anthropic upstreams. The client body becomes a
+/// canonical Anthropic request (the only dialect every translator already
+/// speaks), goes upstream through the same plumbing as the other forwards,
+/// and the answer is reshaped back into Responses — streaming through
+/// [`ResponsesOutTranslator`], non-streaming through
+/// `anthropic_to_responses_response`. Errors stay in the OpenAI shape.
+///
+/// Unlike the Fase 1 passthrough, `reasoning`/`include` and the exotic tools
+/// (`web_search`, `namespace`) do not survive translation — documented in
+/// `docs/config-codex.md`. The catalog variant still applies to the
+/// translated body (existing semantics).
+pub(crate) async fn forward_responses_translated(ctx: ForwardCtx<'_>) -> Response {
+    let ForwardCtx {
+        s,
+        headers,
+        body,
+        entry,
+        base,
+        bearer,
+        gateway_model,
+        stream,
+        variant,
+    } = ctx;
+    let custom_tools = codex_custom_tool_names(body);
+    if let Some(tools) = body.get("tools").and_then(Value::as_array) {
+        let dropped: Vec<&str> = tools
+            .iter()
+            .filter_map(|t| {
+                let ty = t.get("type").and_then(Value::as_str).unwrap_or("");
+                (ty != "function" && ty != "custom").then_some(ty)
+            })
+            .collect();
+        if !dropped.is_empty() {
+            tracing::warn!(
+                model = %gateway_model,
+                tools = ?dropped,
+                "dropping tools without an Anthropic equivalent on the translated Codex path"
+            );
+        }
+    }
+
+    let protocol = protocol_for_entry(entry);
+    let anth = responses_to_anthropic_request(body, &entry.model_id);
+    // Same order as the existing forwards: translate first, then variant and
+    // catalog defaults land on the *translated* body.
+    let (url, out_body) = if matches!(protocol, Protocol::ChatCompletions) {
+        let mut b = anthropic_to_openai(&anth, &entry.model_id);
+        if let Some(v) = variant {
+            match apply_variant_checked(std::mem::take(&mut b), entry, v) {
+                Ok(applied) => b = applied,
+                Err(e) => {
+                    return openai_error(
+                        StatusCode::BAD_REQUEST,
+                        "invalid_request_error",
+                        &e.to_string(),
+                    )
+                }
+            }
+        }
+        apply_entry_body(&mut b, entry);
+        (join_url(base, "chat/completions"), b)
+    } else {
+        let mut b = anth.clone();
+        if let Some(v) = variant {
+            match apply_variant_checked(std::mem::take(&mut b), entry, v) {
+                Ok(applied) => b = applied,
+                Err(e) => {
+                    return openai_error(
+                        StatusCode::BAD_REQUEST,
+                        "invalid_request_error",
+                        &e.to_string(),
+                    )
+                }
+            }
+        }
+        apply_entry_body(&mut b, entry);
+        (join_url(base, "messages"), b)
+    };
+
+    let mut req = upstream_post(s, &url, bearer);
+    if matches!(protocol, Protocol::Anthropic) {
+        // Protocol-specific headers, mirrored from `forward_anthropic`.
+        req = req.header(
+            "anthropic-version",
+            headers
+                .get("anthropic-version")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("2023-06-01"),
+        );
+        if let Some(beta) = headers.get("anthropic-beta").and_then(|v| v.to_str().ok()) {
+            let merged = match entry_beta_header(entry) {
+                Some(catalog) if !catalog.is_empty() && !beta.contains(&catalog) => {
+                    format!("{beta}, {catalog}")
+                }
+                _ => beta.to_string(),
+            };
+            req = req.header("anthropic-beta", merged);
+        } else if let Some(catalog) = entry_beta_header(entry) {
+            req = req.header("anthropic-beta", catalog);
+        }
+        req = with_session_headers(
+            with_entry_headers_except(req, entry, &["anthropic-beta"]),
+            headers,
+        );
+    } else {
+        req = with_session_headers(with_entry_headers(req, entry), headers);
+    }
+
+    let resp = match send_json_openai(req, &out_body).await {
+        Ok(r) => r,
+        Err(e) => return *e,
+    };
+    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        log_upstream_error(
+            entry,
+            gateway_model,
+            base,
+            status,
+            &text,
+            &request_summary(&anth),
+            headers,
+        );
+        return openai_error_response(status, &text);
+    }
+    let is_chat = matches!(protocol, Protocol::ChatCompletions);
+
+    if !stream {
+        let v: Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                return openai_error(
+                    StatusCode::BAD_GATEWAY,
+                    "server_error",
+                    &format!("invalid upstream JSON: {e}"),
+                )
+            }
+        };
+        let anth_resp = if is_chat {
+            openai_to_anthropic(&v, gateway_model)
+        } else {
+            v
+        };
+        if let Some(uid) = anth_resp.get("id").and_then(Value::as_str) {
+            tracing::debug!(upstream_id = uid, model = gateway_model, "upstream ok");
+        }
+        return Json(anthropic_to_responses_response(
+            &anth_resp,
+            gateway_model,
+            &custom_tools,
+        ))
+        .into_response();
+    }
+
+    // Streaming: upstream dialect -> Anthropic events -> Responses frames.
+    let gw = gateway_model.to_string();
+    let ct = custom_tools.clone();
+    let byte_stream = resp.bytes_stream();
+    let out = async_stream::stream! {
+        let mut shaper = ResponsesOutTranslator::new(&gw, ct);
+        let mut chat_tr = is_chat.then(|| StreamTranslator::new(&gw));
+        let mut buf: Vec<u8> = vec![];
+        let mut pinned = Box::pin(byte_stream);
+        let mut chat_in: u64 = 0;
+        let mut chat_out: u64 = 0;
+        let mut chat_stop = "end_turn".to_string();
+        let mut upstream_error: Option<String> = None;
+        while let Some(chunk) = pinned.next().await {
+            let bytes = match chunk {
+                Ok(b) => b,
+                Err(e) => {
+                    upstream_error = Some(format!("upstream stream read failed: {e}"));
+                    break;
+                }
+            };
+            buf.extend_from_slice(&bytes);
+            for payload in drain_sse_payloads(&mut buf) {
+                let Ok(v) = serde_json::from_str::<Value>(&payload) else { continue; };
+                if let Some(tr) = chat_tr.as_mut() {
+                    // Chat SSE: track usage/finish, translate to Anthropic
+                    // events, then feed those to the Responses shaper.
+                    if let Some(u) = v.get("usage") {
+                        if let Some(n) = u.get("prompt_tokens").and_then(Value::as_u64) {
+                            chat_in = n;
+                        }
+                        if let Some(n) = u.get("completion_tokens").and_then(Value::as_u64) {
+                            chat_out = n;
+                        }
+                    }
+                    if let Some(fr) = v
+                        .get("choices")
+                        .and_then(|c| c.as_array())
+                        .and_then(|a| a.first())
+                        .and_then(|c| c.get("finish_reason"))
+                        .and_then(|f| f.as_str())
+                    {
+                        chat_stop = match fr {
+                            "tool_calls" => "tool_use".to_string(),
+                            "length" => "max_tokens".to_string(),
+                            _ => "end_turn".to_string(),
+                        };
+                    }
+                    let frames = tr.feed(&v);
+                    for fv in payloads_from_frames(&frames) {
+                        for f in shaper.feed(&fv) {
+                            yield Ok::<_, std::io::Error>(f.into_bytes());
+                        }
+                    }
+                } else {
+                    for f in shaper.feed(&v) {
+                        yield Ok::<_, std::io::Error>(f.into_bytes());
+                    }
+                }
+            }
+        }
+        drop(pinned);
+        if let Some(msg) = upstream_error {
+            for f in shaper.finish_abrupt(&msg) {
+                yield Ok::<_, std::io::Error>(f.into_bytes());
+            }
+        } else if let Some(mut tr) = chat_tr {
+            // Close the Anthropic intermediate first (synthesizes
+            // message_delta/message_stop), then the shaper's terminal frame.
+            let frames = tr.finish(&chat_stop, chat_in, chat_out);
+            for fv in payloads_from_frames(&frames) {
+                for f in shaper.feed(&fv) {
+                    yield Ok::<_, std::io::Error>(f.into_bytes());
+                }
+            }
+            if !shaper.finished {
+                for f in shaper.finish_abrupt("upstream stream closed before response.completed") {
+                    yield Ok::<_, std::io::Error>(f.into_bytes());
+                }
+            }
+        } else if !shaper.finished {
+            for f in shaper.finish_abrupt("upstream stream closed before response.completed") {
+                yield Ok::<_, std::io::Error>(f.into_bytes());
+            }
+        }
+    };
+    sse_stream_response(out)
 }
 
 pub(crate) async fn forward_openai(ctx: ForwardCtx<'_>) -> Response {

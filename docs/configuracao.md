@@ -141,9 +141,10 @@ Além de `POST /v1/messages` (Claude Code / Claude Desktop), o gateway serve
 `POST /v1/responses` (dialecto **OpenAI Responses API**, o único que o Codex
 fala) e `GET /v1/models/codex` (catálogo nativo para o picker do Codex). A
 chave `responses_endpoint` (default `true`) liga/desliga as duas rotas — com
-`false` o gateway volta a ser exclusivamente Anthropic. Modelos com upstream Chat/Anthropic respondem
-`501 not_implemented` nesta porta até a Fase 2 do plano de compatibilidade.
-Setup completo do cliente em [Configuração no Codex](config-codex.md).
+`false` o gateway volta a ser exclusivamente Anthropic. Modelos de upstream
+Responses usam passthrough; Chat/Anthropic passam pela tradução canônica
+(Fase 2). Setup completo do cliente em
+[Configuração no Codex](config-codex.md).
 
 ## Escolhendo modelos — modelMap
 

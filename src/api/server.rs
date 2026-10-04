@@ -4,9 +4,10 @@
 //! (`api::server::{router, AppState, ...}`).
 
 use super::count_tokens::count_tokens;
-use super::errors::{anthropic_error, openai_error, openai_error_code};
+use super::errors::{anthropic_error, openai_error};
 use super::forward::{
-    forward_anthropic, forward_openai, forward_responses, forward_responses_passthrough, ForwardCtx,
+    forward_anthropic, forward_openai, forward_responses, forward_responses_passthrough,
+    forward_responses_translated, ForwardCtx,
 };
 use super::mock::mock_check_response;
 pub use super::state::AppState;
@@ -169,28 +170,17 @@ async fn list_models(State(s): State<AppState>) -> impl IntoResponse {
 /// (`docs/config-codex.md`). The Codex picker decodes only
 /// `{"models": [ModelInfo...]}` — never the OpenAI `{"object":"list",
 /// "data":[...]}` shape of `/v1/models` — so this route reshapes the same
-/// alias rows into that dialect. Filtered to `Protocol::Responses` entries:
-/// everything else answers `501 not_implemented` on `/v1/responses` until
-/// Fase 2, and a picker full of dead models is worse than a short list.
+/// alias rows into that dialect. Every gateway model qualifies: Responses
+/// upstreams go out as Fase 1 passthrough, the rest through the Fase 2
+/// translation.
 ///
 /// Field set mirrors Codex's own `remote_model` fixture
 /// (`model-provider/src/provider.rs`); `context_window` carries the size so
 /// the `[1m]` display suffix from `/v1/models` is unnecessary here.
 async fn codex_models(State(s): State<AppState>) -> impl IntoResponse {
     let aliases = s.aliases.read().await;
-    let catalog = s.catalog.read().await;
     let mut models: Vec<Value> = vec![];
-    let mut priority = 0i32;
-    for a in aliases.iter() {
-        let Some(entry) = catalog
-            .iter()
-            .find(|e| e.qualified() == a.opencode_ref || e.id == a.opencode_ref)
-        else {
-            continue;
-        };
-        if protocol_for_entry(entry) != Protocol::Responses {
-            continue;
-        }
+    for (priority, a) in aliases.iter().enumerate() {
         let mut item = serde_json::json!({
             "slug": a.gateway_id,
             "display_name": a.display_name,
@@ -206,7 +196,7 @@ async fn codex_models(State(s): State<AppState>) -> impl IntoResponse {
             "shell_type": "unified_exec",
             "visibility": "list",
             "supported_in_api": true,
-            "priority": priority,
+            "priority": priority as i32,
             "support_verbosity": false,
             "truncation_policy": {"mode": "bytes", "limit": 10000},
             "experimental_supported_tools": [],
@@ -216,7 +206,6 @@ async fn codex_models(State(s): State<AppState>) -> impl IntoResponse {
             item["context_window"] = Value::from(w);
             item["max_context_window"] = Value::from(w);
         }
-        priority += 1;
         models.push(item);
     }
     Json(serde_json::json!({ "models": models }))
@@ -334,9 +323,9 @@ async fn messages(
 
 /// The OpenAI Responses edge for Codex clients. Mirrors `messages()` minus
 /// the Claude Code specifics: no `mock_classifier` (that probe is Claude
-/// Code only), OpenAI error shapes everywhere, and dispatch gated to
-/// Responses-upstream models — Chat/Anthropic upstreams answer
-/// `501 not_implemented` until Fase 2 adds the canonical translation.
+/// Code only) and OpenAI error shapes everywhere. Responses-upstream models
+/// go out as passthrough; Chat/Anthropic upstreams go through the Fase 2
+/// canonical translation (`forward_responses_translated`).
 async fn responses(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -407,17 +396,19 @@ async fn responses(
             })
             .await
         }
-        Protocol::ChatCompletions | Protocol::Anthropic => openai_error_code(
-            StatusCode::NOT_IMPLEMENTED,
-            "server_error",
-            &format!(
-                "model '{}' resolves to a {:?} upstream; the /v1/responses edge only \
-                 forwards Responses-upstream models (translation for Chat/Anthropic \
-                 upstreams is planned — see docs/config-codex.md)",
-                requested,
-                protocol_for_entry(&entry)
-            ),
-            Some("not_implemented"),
-        ),
+        Protocol::ChatCompletions | Protocol::Anthropic => {
+            forward_responses_translated(ForwardCtx {
+                s: &s,
+                headers: &headers,
+                body: &body,
+                entry: &entry,
+                base: &base,
+                bearer: &bearer,
+                gateway_model: &requested,
+                stream,
+                variant: variant.as_deref(),
+            })
+            .await
+        }
     }
 }

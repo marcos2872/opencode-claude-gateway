@@ -11,9 +11,10 @@ pelo pacote (provider).
 
 Há duas bordas de cliente: `POST /v1/messages` (dialecto Anthropic — Claude
 Code e Claude Desktop) e `POST /v1/responses` (dialecto OpenAI Responses —
-Codex; Fase 1 em passthrough byte-a-byte para upstreams Responses, com
-garra de evento terminal e erros em shape OpenAI, ligada por
-`responses_endpoint`, default on).
+Codex; passthrough byte-a-byte para upstreams Responses + tradução canônica
+Anthropic para upstreams Chat/Anthropic, com garra de evento terminal e erros
+em shape OpenAI, ligada por `responses_endpoint`, default on — mais o
+catálogo `GET /v1/models/codex` para o picker do Codex).
 
 ```mermaid
 flowchart LR

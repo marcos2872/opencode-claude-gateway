@@ -10,30 +10,39 @@ fala a **OpenAI Responses API** (`POST {base_url}/responses`, sempre com
 `stream: true`) — o gateway expõe essa porta como segunda borda de cliente.
 As opções do lado do gateway estão em [Configuração](configuracao.md).
 
-## Como funciona (Fase 1 — passthrough)
+## Como funciona
 
-O handler `/v1/responses` recebe o corpo do Codex e o repassa **quase
-intacto** ao upstream, mudando apenas o `model` (para o id do catálogo) e
-mesclando a variante/defaults do modelo — mesma semântica dos outros caminhos:
-a variante do catálogo sobrepõe o `reasoning.effort` pedido pelo cliente. A
-resposta (JSON ou SSE) volta em bytes, com heartbeat local de 20s durante o
-silêncio do upstream (o `event: ping` é ignorado com segurança pelo parser do
-Codex) e uma **garra de evento terminal**: se o upstream cair ou truncar o
-stream antes de `response.completed`, o gateway emite um `response.failed`
-sintético antes de fechar (sem isso o Codex esperaria os 300s do idle timeout
-dele).
+O handler `/v1/responses` escolhe o caminho pelo upstream do modelo:
 
-Funciona hoje com os modelos cujo upstream já é a Responses API:
+- **Passthrough (Responses):** o corpo do Codex vai **quase intacto** ao
+  upstream — só `model`, variante e defaults do catálogo mudam (a variante do
+  catálogo sobrepõe o `reasoning.effort` do cliente) — e a resposta volta em
+  bytes. Cobre as linhas `opencode-go`/`zen` do endpoint `/responses`
+  (grok-4.7/4.6, gpt-6-luna, gpt-5.6-luna, muse-spark) e as Copilot de
+  `endpoint: "responses"` (GPT-6/5.6, grok, mai-code, codex). Fidelidade
+  total em `reasoning.encrypted_content`, `include` e tools.
+- **Tradução (Chat/Anthropic):** o corpo vira uma request **canônica
+  Anthropic** (`instructions` → `system`, `function_call`/`_output` →
+  `tool_use`/`tool_result`, custom tools como função de campo `input`,
+  imagens, `tool_choice`, `max_output_tokens` → `max_tokens`) e vai ao
+  upstream no dialecto dele; a resposta (JSON ou SSE) é remontada para
+  Responses. Cobre glm, kimi, deepseek, mimo (Chat) e qwen, minimax
+  (Messages) — e todas as demais linhas do catálogo.
 
-- linhas `opencode-go`/`zen` do endpoint `/responses` (grok-4.7/4.6,
-  gpt-6-luna, gpt-5.6-luna, muse-spark);
-- linhas Copilot de `endpoint: "responses"` (GPT-6/5.6, grok, mai-code, codex).
+  Neste caminho **não sobrevivem** (por construção, documentado):
+  `reasoning`/`include` (a variante do catálogo continua valendo), `store`,
+  `prompt_cache_key`, `client_metadata`, `parallel_tool_calls` e tools sem
+  equivalente Anthropic (`web_search`, `namespace` — aviso no log; tools
+  `custom`/apply_patch **são** traduzidas).
 
-Modelos cujo upstream é Chat Completions (glm, kimi, deepseek, mimo, ...) ou
-Messages (qwen, minimax) respondem **`501 not_implemented`** nesta porta — a
-tradução para esses protocolos é a Fase 2 do plano. Erros (401, 404, 4xx do
-upstream) saem sempre no **shape OpenAI** (`{"error":{"message","type","code"}}`),
-que é o único que o Codex sabe ler.
+Em ambos: heartbeat local de 20s durante o silêncio do upstream (o
+`event: ping` é ignorado com segurança pelo parser do Codex) e uma **garra
+de evento terminal** — se o stream terminar antes de
+`response.completed`/`incomplete`/`failed`, o gateway emite um
+`response.failed` sintético antes de fechar (sem isso o Codex esperaria os
+300s do idle timeout dele). Erros (401, 404, 4xx do upstream) saem sempre no
+**shape OpenAI** (`{"error":{"message","type","code"}}`), que é o único que o
+Codex sabe ler.
 
 ## Lado do gateway
 
@@ -83,11 +92,8 @@ nativo, o picker mostra só os modelos built-in (e a entrada do seu `model`
 aparece como "modelo personalizado" sem nome). A chave `model_catalog_url`
 do provider aponta para `GET /v1/models/codex`, que serve as mesmas aliases
 em forma **Codex-native** (`{"models": [...]}` — o único formato que o parser
-`ModelsResponse` decoda) e **filtra para modelos de upstream Responses**
-(os únicos que passam em `/v1/responses` na Fase 1).
-
-- Só aparecem linhas Responses (grok, gpt-*, muse, Copilot `g-*`); linhas
-  Claude/Chat continuam fora até a Fase 2.
+`ModelsResponse` decoda). **Todos** os modelos do gateway aparecem: os de
+upstream Responses no passthrough, os demais pela tradução da Fase 2.
 - Cada modelo carrega `base_instructions` (obrigatório para o decode do
   Codex): texto derivado das instruções bundled do próprio Codex
   (**Apache-2.0**, primeira frase neutralizada), para o harness
@@ -103,7 +109,6 @@ em forma **Codex-native** (`{"models": [...]}` — o único formato que o parser
 |---|---|
 | `401 authentication_error` (shape OpenAI) | token errado/ausente — `env_key` ou `auth_token` do gateway. |
 | `404 not_found_error` | id do modelo fora do catálogo — copie o id de `GET /v1/models` (ou veja o picker com `model_catalog_url`). |
-| `501 not_implemented` (`code`) | modelo com upstream Chat/Anthropic — Fase 2 (use uma linha Responses). |
 | `response.failed` no meio do stream | upstream caiu/truncou; a garra do gateway reporta `response.error.message`. |
 | `403` de upstream `opencode/*` | free-tier fora do OpenCode (escondido no `/v1/models` a menos que `include_free_tier = true`). |
 

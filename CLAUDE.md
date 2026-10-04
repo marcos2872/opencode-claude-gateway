@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-cargo test                    # unit + integration tests (tests/gateway.rs)
+cargo test                    # unit + integration tests (tests/gateway.rs, tests/codex.rs)
 cargo test --test gateway     # only the e2e gateway tests
 cargo test --test perf        # proxy translation latency (report-only in debug)
 cargo test <name>             # single test by name substring
@@ -112,14 +112,19 @@ Layers:
   (body/SSE byte-for-byte + catalog variant/defaults + terminal-event claw:
   upstream truncation before `response.completed` emits a synthetic
   `response.failed` before EOF); Chat/Anthropic upstreams get
-  `501 not_implemented` until Fase 2. Also under that flag:
+  Chat/Anthropic upstreams instead go through `forward_responses_translated`
+  (Fase 2): canonical Anthropic request (`responses_to_anthropic_request`)
+  → existing `anthropic_to_openai` for Chat rows → response reshaped back by
+  `anthropic_to_responses_response` / `ResponsesOutTranslator`
+  (Anthropic events → Responses SSE, custom tools round-trip as
+  `custom_tool_call`; `reasoning`/`include`/exotic tools dropped — see
+  docs/config-codex.md). Also under the flag:
   `GET /v1/models/codex` — the Codex-native catalog for the provider's
   `model_catalog_url` (`{"models":[...]}`, the only shape Codex's
-  `ModelsResponse` decodes), same alias rows filtered to Responses-upstream
-  models, each carrying `base_instructions` (required by the Codex decoder;
-  derived from Codex's bundled prompt, Apache-2.0, in
-  `src/api/codex_base_instructions.txt`). Gated by
-  `config.responses_endpoint` (default true).
+  `ModelsResponse` decodes), every gateway alias, each carrying
+  `base_instructions` (required by the Codex decoder; derived from Codex's
+  bundled prompt, Apache-2.0, in `src/api/codex_base_instructions.txt`).
+  Gated by `config.responses_endpoint` (default true).
 
 ## Conventions & gotchas
 
@@ -163,9 +168,11 @@ Layers:
   Anthropic one (and its stream parser needs `response.completed`/`failed`
   before EOF, hence the terminal-event claw).
 - **Codex edge** (`POST /v1/responses`, `responses_endpoint`, default `true`):
-  Fase 1 = passthrough for Responses-upstream models only (opencode-go/zen
+  Responses-upstream models pass through byte-for-byte (opencode-go/zen
   `/responses` rows + Copilot `endpoint: "responses"`); Chat/Anthropic
-  upstreams answer `501 not_implemented` (Fase 2 translates). Codex's
+  upstreams use the Fase 2 canonical translation (all models work; the
+  effort selector only reaches Responses upstreams — translated upstreams
+  rely on the catalog variant). Codex's
   `session-id`/`thread-id` headers feed `x-opencode-session` only after the
   Claude headers are checked, so the Claude path is byte-identical. Codex
   tests live in the self-contained `tests/codex.rs`; `tests/gateway.rs`

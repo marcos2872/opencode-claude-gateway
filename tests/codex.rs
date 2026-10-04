@@ -24,6 +24,7 @@ use tokio::sync::Mutex;
 const TOKEN: &str = "test-secret";
 const CHAT_PKG: &str = "@opencode/ai/providers/openai-compatible";
 const RESPONSES_PKG: &str = "@opencode/ai/providers/openai";
+const ANTHROPIC_PKG: &str = "@opencode/ai/providers/anthropic";
 
 fn test_config() -> AppConfig {
     AppConfig {
@@ -203,9 +204,60 @@ async fn mock_responses(
     }
 }
 
+async fn mock_chat_completions(
+    State(st): State<MockUpstream>,
+    Json(body): Json<Value>,
+) -> Response {
+    st.calls.lock().await.push(body.clone());
+    Json(json!({
+        "id": "chatcmpl-codex",
+        "choices": [{"index": 0, "finish_reason": "stop",
+            "message": {"role": "assistant", "content": "mock chat reply"}}],
+        "usage": {"prompt_tokens": 7, "completion_tokens": 9}
+    }))
+    .into_response()
+}
+
+/// Anthropic upstream for the Fase 2 translated path: answers a canned
+/// streaming message (message_start -> text delta -> message_stop) when the
+/// request asks for `stream`, else a plain message JSON.
+async fn mock_messages(State(st): State<MockUpstream>, Json(body): Json<Value>) -> Response {
+    st.calls.lock().await.push(body.clone());
+    if body.get("stream").and_then(Value::as_bool).unwrap_or(false) {
+        let sse = concat!(
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_up\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"mock-anth\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":7,\"output_tokens\":0}}}\n\n",
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"olá codex\"}}\n\n",
+            "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"input_tokens\":7,\"output_tokens\":9}}\n\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        );
+        return Response::builder()
+            .header("content-type", "text/event-stream")
+            .body(axum::body::Body::from(sse))
+            .unwrap();
+    }
+    Json(json!({
+        "id": "msg_up", "type": "message", "role": "assistant",
+        "model": body.get("model").cloned().unwrap_or(Value::Null),
+        "content": [{"type": "text", "text": "mock anthropic reply"}],
+        "stop_reason": "end_turn", "stop_sequence": null,
+        "usage": {"input_tokens": 3, "output_tokens": 5}
+    }))
+    .into_response()
+}
+
+/// Bodies recorded by the upstream. Each test drives exactly one route on
+/// its own mock, so the path filter is documentation, not selection.
+async fn calls_to(mock: &MockUpstream, _path: &str) -> Vec<Value> {
+    mock.calls.lock().await.clone()
+}
+
 async fn spawn_mock(mock: MockUpstream) -> String {
     let app = Router::new()
         .route("/responses", post(mock_responses))
+        .route("/chat/completions", post(mock_chat_completions))
+        .route("/messages", post(mock_messages))
         .with_state(mock);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -353,7 +405,7 @@ async fn codex_unauthorized_is_401_openai_shape() {
 }
 
 #[tokio::test]
-async fn codex_chat_upstream_is_501_not_implemented() {
+async fn codex_chat_upstream_translated_round_trip() {
     let mock = MockUpstream::default();
     let base = spawn_mock(mock.clone()).await;
     let state = seeded_state(
@@ -363,24 +415,105 @@ async fn codex_chat_upstream_is_501_not_implemented() {
     )
     .await;
     let server = axum_test::TestServer::new(router(state)).unwrap();
+    let mut body = codex_body("claude-codex-chat");
+    body["stream"] = json!(false);
+    body["tools"] = json!([
+        {"type": "function", "name": "shell", "description": "d",
+         "parameters": {"type": "object"}},
+        {"type": "custom", "name": "apply_patch", "description": "p"},
+        {"type": "web_search"}
+    ]);
     let resp = server
         .post("/v1/responses")
         .add_header("authorization", format!("Bearer {TOKEN}"))
-        .json(&codex_body("claude-codex-chat"))
+        .json(&body)
         .await;
-    // Fase 1: upstream Chat/Anthropic é gates explícito (Fase 2 traduz).
-    assert_eq!(resp.status_code(), 501);
+    assert_eq!(resp.status_code(), 200);
+    // Client sees the Responses dialect, even though upstream is Chat.
     let v: Value = resp.json();
-    assert_eq!(v["error"]["type"], "server_error");
-    assert_eq!(v["error"]["code"], "not_implemented");
-    assert!(
-        v["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("docs/config-codex.md"),
-        "{v}"
-    );
-    assert!(mock.calls.lock().await.is_empty());
+    assert_eq!(v["object"], "response");
+    assert_eq!(v["status"], "completed");
+    assert!(v["id"].as_str().unwrap().starts_with("resp_"), "{v}");
+    assert_eq!(v["output"][0]["type"], "message");
+    assert_eq!(v["output"][0]["content"][0]["type"], "output_text");
+    assert_eq!(v["output"][0]["content"][0]["text"], "mock chat reply");
+    assert_eq!(v["usage"]["input_tokens"], 7);
+    assert_eq!(v["usage"]["total_tokens"], 16);
+
+    // Upstream received the canonical translation behind the scenes.
+    let calls = calls_to(&mock, "chat/completions").await;
+    assert_eq!(calls.len(), 1);
+    let up = &calls[0];
+    assert_eq!(up["model"], "mock-chat");
+    let sys = up["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "system")
+        .and_then(|m| m["content"].as_str())
+        .unwrap_or("")
+        .to_string();
+    assert!(sys.contains("you are codex"), "{up}");
+    // function + custom survive as functions; web_search has no equivalent.
+    let names: Vec<&str> = up["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["shell", "apply_patch"], "{names:?}");
+    // The tool history round-tripped (function_call -> tool_calls/tool role).
+    let roles: Vec<&str> = up["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["role"].as_str().unwrap())
+        .collect();
+    assert!(roles.contains(&"tool"), "{roles:?}");
+}
+
+#[tokio::test]
+async fn codex_anthropic_upstream_translated_stream() {
+    let mock = MockUpstream::default();
+    let base = spawn_mock(mock.clone()).await;
+    let state = seeded_state(
+        test_config(),
+        vec![mock_entry(&base, ANTHROPIC_PKG, "mock-anth")],
+        vec![alias("claude-codex-anth", "opencode/mock-anth")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let resp = server
+        .post("/v1/responses")
+        .add_header("authorization", format!("Bearer {TOKEN}"))
+        .json(&codex_body("claude-codex-anth"))
+        .await;
+    assert_eq!(resp.status_code(), 200);
+    // Anthropic SSE comes back as Responses SSE — no Anthropic leak.
+    let text = resp.text();
+    assert!(text.contains("response.created"), "{text}");
+    assert!(text.contains("response.output_text.delta"), "{text}");
+    assert!(text.contains("olá codex"), "{text}");
+    assert!(text.contains("response.output_item.done"), "{text}");
+    assert!(text.contains("response.completed"), "{text}");
+    assert!(text.contains("\"input_tokens\":7"), "{text}");
+    assert!(text.contains("\"total_tokens\":16"), "{text}");
+    assert!(!text.contains("message_start"), "{text}");
+    // The upstream saw a canonical Anthropic Messages body.
+    let calls = calls_to(&mock, "messages").await;
+    assert_eq!(calls.len(), 1);
+    let up = &calls[0];
+    assert_eq!(up["model"], "mock-anth");
+    assert_eq!(up["stream"], true);
+    let sys = up["system"].as_str().unwrap_or("");
+    assert!(sys.contains("you are codex"), "{up}");
+    let has_tool_use = up["messages"].as_array().unwrap().iter().any(|m| {
+        m["content"]
+            .as_array()
+            .map(|b| b.iter().any(|x| x["type"] == "tool_use"))
+            .unwrap_or(false)
+    });
+    assert!(has_tool_use, "{up}");
 }
 
 #[tokio::test]
@@ -493,7 +626,7 @@ const CODEX_REQUIRED_MODEL_FIELDS: [&str; 11] = [
 ];
 
 #[tokio::test]
-async fn codex_model_catalog_lists_responses_models_only() {
+async fn codex_model_catalog_lists_every_gateway_model() {
     let base = "http://127.0.0.1:9";
     let mut windowed = alias("claude-codex-grok", "opencode/mock-codex");
     windowed.context_window = Some(256_000);
@@ -513,11 +646,16 @@ async fn codex_model_catalog_lists_responses_models_only() {
         .await;
     assert_eq!(resp.status_code(), 200);
     let v: Value = resp.json();
-    // Só a linha Responses; a Chat responderia 501 em /v1/responses.
+    // Fase 2: Responses (passthrough) AND Chat (translated) both qualify.
     let models = v["models"].as_array().expect("`models` array");
-    assert_eq!(models.len(), 1, "{v}");
+    assert_eq!(models.len(), 2, "{v}");
+    let slugs: Vec<&str> = models.iter().map(|m| m["slug"].as_str().unwrap()).collect();
+    assert_eq!(
+        slugs,
+        ["claude-codex-grok", "claude-codex-chat"],
+        "{slugs:?}"
+    );
     let m = &models[0];
-    assert_eq!(m["slug"], "claude-codex-grok");
     for k in CODEX_REQUIRED_MODEL_FIELDS {
         assert!(m.get(k).is_some(), "missing `{k}` in {v}");
     }
@@ -531,6 +669,8 @@ async fn codex_model_catalog_lists_responses_models_only() {
     assert_eq!(m["context_window"], 256_000);
     assert_eq!(m["max_context_window"], 256_000);
     assert!(!m["slug"].as_str().unwrap().contains('['));
+    // Linha sem janela conhecida omite os campos (não manda null).
+    assert!(models[1].get("context_window").is_none(), "{v}");
     // Níveis de raciocínio no formato {effort, description}.
     let levels = m["supported_reasoning_levels"].as_array().unwrap();
     assert!(levels.len() >= 2, "{v}");
