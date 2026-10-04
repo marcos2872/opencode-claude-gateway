@@ -44,6 +44,18 @@ de evento terminal** — se o stream terminar antes de
 **shape OpenAI** (`{"error":{"message","type","code"}}`), que é o único que o
 Codex sabe ler.
 
+### Modelo fora do catálogo → `default_model`
+
+O Codex manda em algumas threads (ex.: fundos/automáticas) o slug embutido
+dele — `gpt-6-luna` — que **não** é um alias do gateway. Sem guarda, o
+resolve por id simples casaria com uma linha qualquer do catálogo
+(`github-copilot/gpt-6-luna`, o primeiro em ordem) e a chamada ia bater no
+Copilot com `429 quota exceeded` — um erro para um modelo que você nunca
+escolheu. A edge Codex agora aplica: **modelo que não é alias nem
+`provider/model` explícito → `default_model` da configuração** (com aviso no
+log `codex edge: model not in gateway catalog`). Sem `default_model`
+configurado, o comportamento antigo permanece (id desconhecido → 404).
+
 ## Lado do gateway
 
 `~/.config/opencode-claude-gateway/config.toml`:
@@ -96,8 +108,12 @@ em forma **Codex-native** (`{"models": [...]}` — o único formato que o parser
 upstream Responses no passthrough, os demais pela tradução da Fase 2.
 - Cada modelo carrega `base_instructions` (obrigatório para o decode do
   Codex): texto derivado das instruções bundled do próprio Codex
-  (**Apache-2.0**, primeira frase neutralizada), para o harness
-  (`apply_patch`, regras de edição) continuar correto.
+  (**Apache-2.0**, primeira frase neutralizada), **enxugado** para as
+  seções de harness (regras de edição/`apply_patch`, ações destrutivas,
+  autonomia) — o Codex limita o download do catálogo a **1 MiB** e
+  recusa o arquivo inteiro acima disso (com o texto completo, 65 modelos
+  estouravam o cap e o picker ficava vazio). O teste
+  `codex_catalog_stays_under_the_client_download_cap` segura esse orçamento.
 - `context_window` vai como campo estruturado (sem sufixo `[1m]` no slug).
 - Depois de mudar o config, reinicie o Codex (o catálogo é cacheado em
   `~/.codex/models_cache.json` com TTL de 5 min). Diagnóstico:

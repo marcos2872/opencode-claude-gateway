@@ -338,10 +338,13 @@ async fn responses(
         .to_string();
     // The Codex config sends the id verbatim; the window-suffix strip is
     // harmless here and lets a copied `[1m]` id resolve like in Claude Code.
+    // Ids outside the gateway catalog (Codex's own bundled defaults, e.g.
+    // `gpt-6-luna`) fall back to `default_model` instead of fuzzy-matching
+    // an arbitrary catalog row — see `AppState::codex_model_or_default`.
     let requested = if raw.is_empty() {
         s.effective_default().await
     } else {
-        strip_window_suffix(&raw).to_string()
+        s.codex_model_or_default(strip_window_suffix(&raw)).await
     };
     if requested.is_empty() {
         return openai_error(

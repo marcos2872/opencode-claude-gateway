@@ -209,6 +209,24 @@ async fn mock_chat_completions(
     Json(body): Json<Value>,
 ) -> Response {
     st.calls.lock().await.push(body.clone());
+    // Streaming: zen-style — id + name + complete arguments all in ONE
+    // delta chunk, then finish. Exercises the single-chunk tool-call path.
+    if body.get("stream").and_then(Value::as_bool).unwrap_or(false) {
+        let sse = concat!(
+            "data: {\"id\":\"chatcmpl-codex\",\"choices\":[{\"index\":0,\"delta\":",
+            "{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",",
+            "\"type\":\"function\",\"function\":{\"name\":\"shell\",",
+            "\"arguments\":\"{\\\"cmd\\\":\\\"ls\\\"}\"}}]},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"chatcmpl-codex\",\"choices\":[{\"index\":0,\"delta\":{},",
+            "\"finish_reason\":\"tool_calls\"}],",
+            "\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":9}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        return Response::builder()
+            .header("content-type", "text/event-stream")
+            .body(axum::body::Body::from(sse))
+            .unwrap();
+    }
     Json(json!({
         "id": "chatcmpl-codex",
         "choices": [{"index": 0, "finish_reason": "stop",
@@ -703,4 +721,121 @@ async fn codex_model_catalog_hidden_when_endpoint_disabled() {
         .add_header("authorization", format!("Bearer {TOKEN}"))
         .await;
     assert_eq!(resp.status_code(), 404);
+}
+
+#[test]
+fn codex_catalog_stays_under_the_client_download_cap() {
+    // Codex bounds `model_catalog_url` downloads at 1 MiB
+    // (MAX_MODEL_CATALOG_BYTES): past that it refuses the WHOLE catalog and
+    // the picker goes empty — which is exactly what happened when the Fase 2
+    // catalog grew from 18 to 65 models on the full-size prompt. Per-model
+    // cost = base_instructions + ~1 KiB of item metadata; the budget keeps
+    // ~100 gateway models under the cap.
+    let instructions = include_str!("../src/api/codex_base_instructions.txt");
+    let per_model = instructions.len() + 1_024;
+    assert!(
+        per_model * 100 < 1024 * 1024,
+        "catalog would exceed the Codex 1 MiB cap at 100 models: {per_model} B/model"
+    );
+}
+
+#[tokio::test]
+async fn codex_unknown_model_falls_back_to_default_model() {
+    // Codex's own bundled slugs (gpt-6-luna etc.) are plain ids that would
+    // fuzzy-match an arbitrary catalog row (github-copilot first → 429).
+    // With `default_model` configured, anything outside the gateway aliases
+    // goes to the configured default instead.
+    let mock = MockUpstream::default();
+    let base = spawn_mock(mock.clone()).await;
+    let cfg = AppConfig {
+        auth_token: TOKEN.to_string(),
+        default_model: "claude-codex".to_string(),
+        ..AppConfig::default()
+    };
+    let state = seeded_state(
+        cfg,
+        vec![mock_entry(&base, RESPONSES_PKG, "mock-codex")],
+        vec![alias("claude-codex", "opencode/mock-codex")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let mut body = codex_body("gpt-6-luna");
+    body["stream"] = json!(false);
+    let resp = server
+        .post("/v1/responses")
+        .add_header("authorization", format!("Bearer {TOKEN}"))
+        .json(&body)
+        .await;
+    assert_eq!(resp.status_code(), 200);
+    let v: Value = resp.json();
+    assert_eq!(v["model"], "claude-codex");
+    // Upstream saw the DEFAULT model, never a fuzzy-matched catalog row.
+    let calls = calls_to(&mock, "responses").await;
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0]["model"], "mock-codex");
+}
+
+#[tokio::test]
+async fn codex_alias_and_provider_ref_bypass_the_fallback() {
+    // Aliases and explicit provider/model refs are never rewritten.
+    let mock = MockUpstream::default();
+    let base = spawn_mock(mock.clone()).await;
+    let cfg = AppConfig {
+        auth_token: TOKEN.to_string(),
+        default_model: "claude-other".to_string(),
+        ..AppConfig::default()
+    };
+    let state = seeded_state(
+        cfg,
+        vec![mock_entry(&base, RESPONSES_PKG, "mock-codex")],
+        vec![
+            alias("claude-codex", "opencode/mock-codex"),
+            alias("claude-other", "opencode/mock-codex"),
+        ],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    // Alias hit: stays on the alias even though a default is configured.
+    let mut body = codex_body("claude-codex");
+    body["stream"] = json!(false);
+    let resp = server
+        .post("/v1/responses")
+        .add_header("authorization", format!("Bearer {TOKEN}"))
+        .json(&body)
+        .await;
+    assert_eq!(resp.status_code(), 200);
+    let v: Value = resp.json();
+    assert_eq!(v["model"], "claude-codex");
+}
+
+#[tokio::test]
+async fn codex_chat_stream_tool_args_survive_single_chunk() {
+    // zen-style upstreams deliver id + name + complete arguments in ONE
+    // SSE chunk. The translated path must land the full string on
+    // output_item.done — an empty "{}" makes Codex fail tool parsing
+    // (`missing field cmd`) on every call.
+    let mock = MockUpstream::default();
+    let base = spawn_mock(mock.clone()).await;
+    let state = seeded_state(
+        test_config(),
+        vec![mock_entry(&base, CHAT_PKG, "mock-chat")],
+        vec![alias("claude-codex-chat", "opencode/mock-chat")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let body = codex_body("claude-codex-chat"); // stream: true
+    let resp = server
+        .post("/v1/responses")
+        .add_header("authorization", format!("Bearer {TOKEN}"))
+        .json(&body)
+        .await;
+    assert_eq!(resp.status_code(), 200);
+    let text = resp.text();
+    assert!(text.contains("response.output_item.done"), "{text}");
+    // arguments fully populated on the done frame (not "{}").
+    assert!(
+        text.contains("\\\"cmd\\\":\\\"ls\\\"") || text.contains("\"cmd\":\"ls\""),
+        "tool arguments must survive the stream translation: {text}"
+    );
+    assert!(text.contains("response.completed"), "{text}");
 }

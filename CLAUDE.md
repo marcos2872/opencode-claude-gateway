@@ -123,7 +123,10 @@ Layers:
   `model_catalog_url` (`{"models":[...]}`, the only shape Codex's
   `ModelsResponse` decodes), every gateway alias, each carrying
   `base_instructions` (required by the Codex decoder; derived from Codex's
-  bundled prompt, Apache-2.0, in `src/api/codex_base_instructions.txt`).
+  bundled prompt, Apache-2.0, trimmed to harness sections — Codex caps the
+  catalog download at 1 MiB and rejects the whole file above it, so the
+  size is guarded by `codex_catalog_stays_under_the_client_download_cap`;
+  asset in `src/api/codex_base_instructions.txt`).
   Gated by `config.responses_endpoint` (default true).
 
 ## Conventions & gotchas
@@ -172,7 +175,11 @@ Layers:
   `/responses` rows + Copilot `endpoint: "responses"`); Chat/Anthropic
   upstreams use the Fase 2 canonical translation (all models work; the
   effort selector only reaches Responses upstreams — translated upstreams
-  rely on the catalog variant). Codex's
+  rely on the catalog variant). A model id that is neither a gateway alias
+  nor an explicit `provider/model` ref falls back to `default_model`
+  (`AppState::codex_model_or_default`) — Codex's bundled slugs like
+  `gpt-6-luna` would otherwise fuzzy-match an arbitrary catalog row and burn
+  Copilot quota; empty `default_model` keeps the old 404. Codex's
   `session-id`/`thread-id` headers feed `x-opencode-session` only after the
   Claude headers are checked, so the Claude path is byte-identical. Codex
   tests live in the self-contained `tests/codex.rs`; `tests/gateway.rs`

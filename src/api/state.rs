@@ -281,6 +281,43 @@ impl AppState {
         self.finish_resolve(hit, &base, variant).await
     }
 
+    /// Codex edge (`POST /v1/responses`): a model id that is neither a
+    /// gateway alias nor an explicit `provider/model` ref falls back to the
+    /// configured `default_model`. Codex sends its own bundled slugs (e.g.
+    /// `gpt-6-luna`) for background threads; plain-id matching would
+    /// fuzzy-resolve them to an arbitrary catalog row (github-copilot first)
+    /// and burn Copilot quota on a model the user never picked. An empty
+    /// `default_model` keeps the old path (unknown ids still 404).
+    pub(crate) async fn codex_model_or_default(&self, requested: &str) -> String {
+        let base = match requested.split_once('#') {
+            Some((b, _)) => b,
+            None => requested,
+        };
+        // Explicit `provider/model` refs stay authoritative, and so does the
+        // configured default itself (no self-fallback warn).
+        if base.contains('/') || requested == self.config.default_model {
+            return requested.to_string();
+        }
+        if self.config.default_model.is_empty() {
+            return requested.to_string();
+        }
+        let is_alias = self
+            .aliases
+            .read()
+            .await
+            .iter()
+            .any(|a| a.gateway_id == base);
+        if is_alias {
+            return requested.to_string();
+        }
+        tracing::warn!(
+            model = %requested,
+            fallback = %self.config.default_model,
+            "codex edge: model not in gateway catalog, using default_model"
+        );
+        self.config.default_model.clone()
+    }
+
     /// Catalog lookup under the read guards (kept out of `resolve` so the
     /// variant checks in `finish_resolve` don't hold any lock).
     async fn lookup_entry(&self, base: &str) -> Option<CatalogEntry> {

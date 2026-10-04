@@ -370,6 +370,15 @@ impl StreamTranslator {
                         if block.id.is_empty() {
                             block.id = format!("toolu_{idx}");
                         }
+                        // zen-style upstreams emit id + name + complete
+                        // arguments in ONE chunk; the args riding along here
+                        // must join the buffer before the flush, or the whole
+                        // call goes out with `arguments: "{}"`.
+                        if let Some(a) = args {
+                            if !a.is_empty() {
+                                block.pending_args.push_str(a);
+                            }
+                        }
                         let bi = block.index;
                         let id = block.id.clone();
                         let name = block.name.clone();
@@ -1117,5 +1126,31 @@ mod tests {
         let last = term.last().unwrap();
         assert!(last.contains("response.incomplete"), "{last}");
         assert!(last.contains("max_output_tokens"), "{last}");
+    }
+
+    #[test]
+    fn stream_translator_keeps_args_that_arrive_with_the_name() {
+        // zen-style upstreams emit the whole tool call in ONE chunk: id,
+        // name and the complete arguments together. The name branch used to
+        // drop the args riding in that same delta, so the client got
+        // `arguments: "{}"` and failed tool parsing (`missing field cmd`).
+        let mut t = StreamTranslator::new("gw");
+        let _ = t.prefix();
+        let ev = t.feed(&serde_json::json!({
+            "choices": [{"delta": {"tool_calls": [
+                {"index": 0, "id": "call_1",
+                 "function": {"name": "exec_command", "arguments": "{\"cmd\":\"ls\"}"}}
+            ]}}]
+        }));
+        assert!(
+            ev.iter()
+                .any(|e| e.contains("content_block_start") && e.contains("tool_use")),
+            "tool block opens: {ev:?}"
+        );
+        assert!(
+            ev.iter()
+                .any(|e| e.contains("input_json_delta") && e.contains("cmd")),
+            "args arriving with the name must flush: {ev:?}"
+        );
     }
 }
