@@ -45,8 +45,19 @@ pub fn estimate_tokens(body: &Value) -> u64 {
                             }
                             BlockKind::ToolUse => tokens += 8, // id + name + JSON.
                             BlockKind::ToolResult => {
-                                if let Some(t) = text_of(b) {
-                                    add_text(&mut tokens, t);
+                                // Text lives under `content` here (a plain
+                                // string or an array of content blocks), not
+                                // under `text` like in `text` blocks.
+                                match b.get("content") {
+                                    Some(Value::String(s)) => add_text(&mut tokens, s),
+                                    Some(Value::Array(blocks)) => {
+                                        for inner in blocks {
+                                            if let Some(x) = text_of(inner) {
+                                                add_text(&mut tokens, x);
+                                            }
+                                        }
+                                    }
+                                    _ => {}
                                 }
                                 tokens += 4;
                             }
@@ -170,13 +181,28 @@ mod tests {
     }
 
     #[test]
-    fn tool_result_counts_fixed_overhead() {
-        // `text_of` lê a chave `text` do bloco: `content` em array não é
-        // percorrido, então só entram overhead da mensagem + 4 do bloco.
+    fn tool_result_counts_text_plus_overhead() {
+        // Array content: "ok" dá 1 token + 4 do bloco + 3 da mensagem.
         let body = json!({"messages": [{"role": "user", "content": [
             {"type": "tool_result", "tool_use_id": "t1", "content": [
                 {"type": "text", "text": "ok"}
             ]}
+        ]}]});
+        assert_eq!(estimate_tokens(&body), 3 + 1 + 4);
+    }
+
+    #[test]
+    fn tool_result_string_content_counts() {
+        let body = json!({"messages": [{"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "abcdefgh"}
+        ]}]});
+        assert_eq!(estimate_tokens(&body), 3 + 2 + 4);
+    }
+
+    #[test]
+    fn tool_result_without_content_counts_overhead_only() {
+        let body = json!({"messages": [{"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1"}
         ]}]});
         assert_eq!(estimate_tokens(&body), 3 + 4);
     }
