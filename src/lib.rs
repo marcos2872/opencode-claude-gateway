@@ -1,4 +1,5 @@
 pub mod api;
+pub mod autostart;
 pub mod cli;
 pub mod config;
 pub mod daemon;

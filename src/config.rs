@@ -1,4 +1,4 @@
-//! Config file (~/.config/frank-opencode/config.toml) + env overrides.
+//! Config file (~/.config/opencode-claude-gateway/config.toml) + env overrides.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -6,7 +6,75 @@ use std::path::PathBuf;
 
 pub const DEFAULT_PORT: u16 = 3737;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Fully-commented starter config written to the default path on first run
+/// (see `load`). Everything is commented so it parses to built-in defaults;
+/// uncomment and edit what you need. Keep in sync with `config.example.toml`
+/// and with every field of `AppConfig` when adding options.
+pub const CONFIG_TEMPLATE: &str = r#"# opencode-claude-gateway — config.toml (created automatically on first run).
+# Everything is commented = built-in defaults. Uncomment and edit what you need.
+# Reference: docs/configuracao.md · full example: config.example.toml
+# Edited config is read at boot: `ocg --stop && ocg --start` to apply
+# (or `systemctl --user restart ocg` when auto-start is enabled).
+
+# Port the gateway listens on (always 127.0.0.1).
+# port = 3737
+
+# Gateway credential the client must send (ANTHROPIC_AUTH_TOKEN / x-api-key).
+# Empty = accept any (localhost-only default). When set, every endpoint
+# except /health requires it (x-api-key or Authorization: Bearer).
+# auth_token = ""
+
+# Used when the client omits "model". Empty = first alias alphabetically
+# (beware: that can be a Copilot row — pick your chat model here).
+# default_model = ""
+
+# OpenCode binary used for catalog + db-path discovery.
+# opencode_bin = "opencode"
+
+# Include Console free-tier (`opencode/*`, public key) models in /v1/models.
+# They 403 outside OpenCode, so they are hidden by default.
+# include_free_tier = false
+
+# Rewrite auto-generated gateway ids to dodge the Claude Desktop picker's
+# bundled third-party-model denylist. Off by default (Claude Code lists
+# every claude-* id already).
+# desktop_aliases = false
+
+# Shield Claude Code CLI background calls from family-spelling catalog rows
+# (claude-sonnet-* / claude-opus-* land on the Copilot rows otherwise).
+# On by default; set false to keep the historical claude-<provider>-<model>.
+# cli_shield_aliases = true
+
+# Answer Claude Code's auto-mode safety-classifier checks (and its tiny
+# liveness probes) locally instead of forwarding upstream. Off by default.
+# mock_classifier = false
+
+# Upstream transport timeouts, in seconds. connect fails fast on an
+# unreachable provider; request bounds the whole call, streaming included.
+# connect_timeout_secs = 30
+# request_timeout_secs = 3600
+
+# Manual alias: wins over the automatic one for the same gateway id.
+# [aliases."claude-my-model"]
+# opencode = "opencode-go/some-model"
+# display_name = "My model (opencode-go)"
+# description = "via ocg"
+
+# Anthropic family tier for /v1/models (Claude Desktop background calls).
+# Key = gateway id or opencode ref (prefer the ref: it survives renames).
+# Tier: haiku | sonnet | opus | fable | mythos
+# [tiers."opencode-go/some-model"]
+# tier = "haiku"
+# family_default = true
+
+# Refs hidden from /v1/models (direct provider/model refs still resolve).
+# [disabled]
+# models = [
+#   "opencode-go/some-model",
+# ]
+"#;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AliasConfig {
     /// OpenCode ref, e.g. `opencode-go/kimi-k2.7-code`.
     pub opencode: String,
@@ -14,7 +82,7 @@ pub struct AliasConfig {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct DisabledConfig {
     #[serde(default)]
     pub models: Vec<String>,
@@ -51,7 +119,7 @@ impl Tier {
 
 /// Tier mapping for one model. The table key matches a gateway id or an
 /// OpenCode ref (`provider/model`), same as `[disabled]`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TierConfig {
     /// One of `haiku` / `sonnet` / `opus` / `fable` / `mythos`.
     pub tier: Tier,
@@ -61,7 +129,7 @@ pub struct TierConfig {
     pub family_default: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default = "default_port")]
     pub port: u16,
@@ -71,7 +139,10 @@ pub struct AppConfig {
     pub auth_token: String,
     #[serde(default)]
     pub default_model: String,
-    #[serde(default)]
+    /// OpenCode binary used for catalog + db-path discovery. The serde
+    /// default must match `Default::default()` (serde would otherwise give
+    /// `""`, breaking `resolve_db_path` for configs that omit the key).
+    #[serde(default = "default_opencode_bin")]
     pub opencode_bin: String,
     #[serde(default)]
     pub aliases: HashMap<String, AliasConfig>,
@@ -144,6 +215,10 @@ fn default_port() -> u16 {
     DEFAULT_PORT
 }
 
+fn default_opencode_bin() -> String {
+    "opencode".to_string()
+}
+
 fn default_true() -> bool {
     true
 }
@@ -154,7 +229,7 @@ impl Default for AppConfig {
             port: DEFAULT_PORT,
             auth_token: String::new(),
             default_model: String::new(),
-            opencode_bin: "opencode".to_string(),
+            opencode_bin: default_opencode_bin(),
             aliases: HashMap::new(),
             disabled: DisabledConfig::default(),
             tiers: HashMap::new(),
@@ -168,40 +243,70 @@ impl Default for AppConfig {
     }
 }
 
+/// Write the commented starter template at `path`, 0600 (the file may hold
+/// `auth_token`). Best-effort: a read-only config dir must not break boot.
+fn seed_template(path: &std::path::Path) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match crate::daemon::write_private(path.to_path_buf(), CONFIG_TEMPLATE) {
+        Ok(()) => println!(
+            "created config template at {} (uncomment and edit)",
+            path.display()
+        ),
+        Err(e) => eprintln!("warning: could not create {}: {e}", path.display()),
+    }
+}
+
 impl AppConfig {
     pub fn config_path(explicit: Option<PathBuf>) -> PathBuf {
         if let Some(p) = explicit {
             return p;
         }
-        if let Ok(env) = std::env::var("FRANK_CONFIG") {
+        if let Ok(env) = std::env::var("OCG_CONFIG") {
             if !env.is_empty() {
                 return PathBuf::from(env);
             }
         }
+        Self::default_config_path()
+    }
+
+    /// The XDG default path (what `--config`/`OCG_CONFIG` override).
+    pub fn default_config_path() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("frank-opencode")
+            .join("opencode-claude-gateway")
             .join("config.toml")
     }
 
     /// Load from file if present, else defaults.
     /// A present-but-invalid file is an error (fail fast instead of
     /// silently running with wrong port / dropped aliases).
+    /// First run at the default path seeds `config.toml` with the commented
+    /// `CONFIG_TEMPLATE` (explicit `--config`/`OCG_CONFIG` paths are left
+    /// alone: what isn't there keeps falling back to defaults silently).
     pub fn load(explicit: Option<PathBuf>) -> Result<Self, String> {
+        let at_default =
+            explicit.is_none() && std::env::var("OCG_CONFIG").map_or(true, |v| v.is_empty());
         let path = Self::config_path(explicit);
         let mut cfg = match std::fs::read_to_string(&path) {
             Ok(text) => toml::from_str(&text)
                 .map_err(|e| format!("invalid config {}: {e}", path.display()))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if at_default {
+                    seed_template(&path);
+                }
+                Self::default()
+            }
             Err(e) => return Err(format!("cannot read config {}: {e}", path.display())),
         };
-        // Env overrides (FRANK_PORT / FRANK_AUTH_TOKEN).
-        if let Ok(p) = std::env::var("FRANK_PORT") {
+        // Env overrides (OCG_PORT / OCG_AUTH_TOKEN).
+        if let Ok(p) = std::env::var("OCG_PORT") {
             if let Ok(n) = p.parse::<u16>() {
                 cfg.port = n;
             }
         }
-        if let Ok(t) = std::env::var("FRANK_AUTH_TOKEN") {
+        if let Ok(t) = std::env::var("OCG_AUTH_TOKEN") {
             if !t.is_empty() {
                 cfg.auth_token = t;
             }
@@ -212,7 +317,7 @@ impl AppConfig {
     pub fn data_dir() -> PathBuf {
         dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("frank-opencode")
+            .join("opencode-claude-gateway")
     }
 
     pub fn is_disabled(&self, opencode_ref: &str, gateway_id: &str) -> bool {
@@ -239,14 +344,14 @@ mod tests {
     #[test]
     fn missing_file_gives_defaults() {
         let cfg =
-            AppConfig::load(Some(PathBuf::from("/nonexistent-frank-test/config.toml"))).unwrap();
+            AppConfig::load(Some(PathBuf::from("/nonexistent-ocg-test/config.toml"))).unwrap();
         assert_eq!(cfg.port, DEFAULT_PORT);
         assert!(cfg.aliases.is_empty());
     }
 
     #[test]
     fn invalid_file_is_an_error_not_silent_defaults() {
-        let dir = std::env::temp_dir().join("frank-cfg-test");
+        let dir = std::env::temp_dir().join("ocg-cfg-test");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("bad.toml");
         std::fs::write(&path, "port = \"not-a-number\"\n").unwrap();
@@ -259,15 +364,15 @@ mod tests {
         let cfg: AppConfig = toml::from_str(
             r#"
 port = 4000
-default_model = "claude-sonnet-4-6-frank"
-[aliases."claude-sonnet-4-6-frank"]
+default_model = "claude-sonnet-4-6-ocg"
+[aliases."claude-sonnet-4-6-ocg"]
 opencode = "opencode-go/kimi-k2.7-code"
 "#,
         )
         .unwrap();
         assert_eq!(cfg.port, 4000);
         assert_eq!(
-            cfg.aliases["claude-sonnet-4-6-frank"].opencode,
+            cfg.aliases["claude-sonnet-4-6-ocg"].opencode,
             "opencode-go/kimi-k2.7-code"
         );
     }
@@ -326,5 +431,50 @@ tier = "sonnet"
             .unwrap_err()
             .to_string();
         assert!(err.contains("turbo"), "{err}");
+    }
+
+    #[test]
+    fn template_parses_to_defaults() {
+        let cfg: AppConfig = toml::from_str(CONFIG_TEMPLATE)
+            .expect("CONFIG_TEMPLATE must be valid TOML (all commented)");
+        assert_eq!(cfg, AppConfig::default());
+    }
+
+    #[test]
+    fn template_documents_every_config_key() {
+        // Adding a field to AppConfig? Add it (commented) to CONFIG_TEMPLATE.
+        for key in [
+            "# port = ",
+            "# auth_token = ",
+            "# default_model = ",
+            "# opencode_bin = ",
+            "# include_free_tier = ",
+            "# desktop_aliases = ",
+            "# cli_shield_aliases = ",
+            "# mock_classifier = ",
+            "# connect_timeout_secs = ",
+            "# request_timeout_secs = ",
+            "# [aliases.",
+            "# [tiers.",
+            "# [disabled]",
+        ] {
+            assert!(CONFIG_TEMPLATE.contains(key), "missing `{key}` in template");
+        }
+    }
+
+    #[test]
+    fn seed_template_writes_0600_valid_file() {
+        let path = std::env::temp_dir().join(format!("ocg-seed-{}.toml", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        seed_template(&path);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text, CONFIG_TEMPLATE);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{}", path.display());
+        }
+        let _ = std::fs::remove_file(&path);
     }
 }

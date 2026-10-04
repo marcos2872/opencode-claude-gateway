@@ -9,7 +9,7 @@
 //! in-process (mock transport), so it is deliberately outside the metric.
 //!
 //! Enforcement: release builds assert `p95 <= budget` per scenario
-//! (`FRANK_PERF_P95_MS` overrides every scenario at once). Debug builds run
+//! (`OCG_PERF_P95_MS` overrides every scenario at once). Debug builds run
 //! and report but do not enforce — the shared `test` job runs them in debug,
 //! where unoptimized timings are too noisy to gate on. Running
 //! `cargo test --release --test perf` (the CI `perf` job) turns them into a
@@ -25,9 +25,9 @@ use axum::{
     routing::post,
     Json, Router,
 };
-use frank_opencode::api::server::{router, AppState};
-use frank_opencode::config::AppConfig;
-use frank_opencode::domain::{AliasEntry, CatalogEntry, CatalogSettings};
+use opencode_claude_gateway::api::server::{router, AppState};
+use opencode_claude_gateway::config::AppConfig;
+use opencode_claude_gateway::domain::{AliasEntry, CatalogEntry, CatalogSettings};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::{
@@ -41,12 +41,12 @@ const RESPONSES_PKG: &str = "@opencode/ai/providers/openai";
 const ANTHROPIC_PKG: &str = "@opencode/ai/providers/anthropic";
 const AUTH: &str = "perf-secret";
 /// Explicit client session id: without it the gateway falls back to a
-/// persisted `frank.session` file, putting real filesystem I/O on the hot path
+/// persisted `ocg.session` file, putting real filesystem I/O on the hot path
 /// (and this test would touch the user's home dir).
 const SESSION: &str = "perf-session";
 /// Release enforcement thresholds (ms). Light shapes are pure local CPU;
 /// heavy shapes pay O(payload) parse/clone/serialize plus ~50 SSE chunks.
-/// Overridable wholesale via `FRANK_PERF_P95_MS`.
+/// Overridable wholesale via `OCG_PERF_P95_MS`.
 const LIGHT_BUDGET_MS: f64 = 15.0;
 const HEAVY_BUDGET_MS: f64 = 25.0;
 /// Always-on sanity gauge: a non-streaming loopback request that exceeds this
@@ -343,7 +343,7 @@ fn alias(gateway: &str, opencode_ref: &str) -> AliasEntry {
 async fn perf_state(entries: Vec<CatalogEntry>, aliases: Vec<AliasEntry>) -> AppState {
     let state = AppState::new(
         gateway_config(),
-        PathBuf::from("/nonexistent-frank-perf/opencode.db"),
+        PathBuf::from("/nonexistent-ocg-perf/opencode.db"),
     );
     *state.catalog.write().await = entries;
     *state.aliases.write().await = aliases;
@@ -581,7 +581,7 @@ struct Scenario {
     expect: Expect,
     counter: Counter,
     heavy: bool,
-    /// Release budget for this scenario; `FRANK_PERF_P95_MS` overrides all.
+    /// Release budget for this scenario; `OCG_PERF_P95_MS` overrides all.
     budget_ms: f64,
 }
 
@@ -600,7 +600,7 @@ fn sample_counts(heavy: bool) -> (usize, usize) {
 }
 
 fn budget_for(scenario_default: f64) -> Option<f64> {
-    match std::env::var("FRANK_PERF_P95_MS") {
+    match std::env::var("OCG_PERF_P95_MS") {
         // Explicit override enforces in any profile.
         Ok(v) => v.parse::<f64>().ok(),
         Err(_) if cfg!(debug_assertions) => None,
@@ -698,7 +698,7 @@ fn report(
         Some(_) => Ok(()),
         None => {
             eprintln!(
-                "[perf] {label}: debug build, budget not enforced (set FRANK_PERF_P95_MS to enforce)"
+                "[perf] {label}: debug build, budget not enforced (set OCG_PERF_P95_MS to enforce)"
             );
             Ok(())
         }

@@ -7,9 +7,9 @@ use axum::{
     routing::post,
     Json, Router,
 };
-use frank_opencode::api::server::{router, AppState};
-use frank_opencode::config::AppConfig;
-use frank_opencode::domain::{AliasEntry, CatalogEntry, CatalogLimit, CatalogSettings};
+use opencode_claude_gateway::api::server::{router, AppState};
+use opencode_claude_gateway::config::AppConfig;
+use opencode_claude_gateway::domain::{AliasEntry, CatalogEntry, CatalogLimit, CatalogSettings};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -60,7 +60,7 @@ async fn seeded_state(
     entries: Vec<CatalogEntry>,
     aliases: Vec<AliasEntry>,
 ) -> AppState {
-    let state = AppState::new(config, PathBuf::from("/nonexistent-frank-test/opencode.db"));
+    let state = AppState::new(config, PathBuf::from("/nonexistent-ocg-test/opencode.db"));
     *state.catalog.write().await = entries;
     *state.aliases.write().await = aliases;
     state
@@ -521,7 +521,7 @@ async fn e2e_chat_completions_round_trip() {
     // The Go routing header is always sent (fallback session id here).
     let sessions = mock.sessions.lock().await;
     assert_eq!(sessions.len(), 1);
-    assert!(sessions[0].starts_with("frank-"), "{}", sessions[0]);
+    assert!(sessions[0].starts_with("ocg-"), "{}", sessions[0]);
 }
 
 #[tokio::test]
@@ -693,9 +693,9 @@ async fn e2e_fast_flavor_keeps_distinct_alias_and_headers() {
     // Aliases built the same way `refresh()` does: no duplicate ids.
     // Shield off here: this test covers fast-flavor disambiguation, not the
     // CLI family shield (covered by the domain shield tests).
-    let aliases = frank_opencode::domain::auto_aliases_for(
+    let aliases = opencode_claude_gateway::domain::auto_aliases_for(
         &[normal.clone(), fast.clone()],
-        frank_opencode::domain::AliasOptions::default(),
+        opencode_claude_gateway::domain::AliasOptions::default(),
     );
     assert_eq!(aliases.len(), 2);
     assert_ne!(aliases[0].gateway_id, aliases[1].gateway_id);
@@ -850,13 +850,14 @@ async fn e2e_variant_adds_reasoning_effort() {
     // Variant support is fed from the catalog (`variants` field), same as
     // `opencode api get /api/model` reports it.
     let mut e = mock_entry(&base, CHAT_PKG, "mock-chat");
-    e.variants.push(frank_opencode::domain::ModelVariant {
-        id: "high".to_string(),
-        settings: frank_opencode::domain::ModelVariantSettings {
-            reasoning_effort: Some("high".to_string()),
-            ..Default::default()
-        },
-    });
+    e.variants
+        .push(opencode_claude_gateway::domain::ModelVariant {
+            id: "high".to_string(),
+            settings: opencode_claude_gateway::domain::ModelVariantSettings {
+                reasoning_effort: Some("high".to_string()),
+                ..Default::default()
+            },
+        });
     let state = seeded_state(
         test_config(),
         vec![e],
@@ -881,13 +882,14 @@ async fn unknown_variant_is_404_with_available_list() {
     let mock = MockUpstream::default();
     let base = spawn_mock(mock.clone()).await;
     let mut e = mock_entry(&base, CHAT_PKG, "mock-chat");
-    e.variants.push(frank_opencode::domain::ModelVariant {
-        id: "high".to_string(),
-        settings: frank_opencode::domain::ModelVariantSettings {
-            reasoning_effort: Some("high".to_string()),
-            ..Default::default()
-        },
-    });
+    e.variants
+        .push(opencode_claude_gateway::domain::ModelVariant {
+            id: "high".to_string(),
+            settings: opencode_claude_gateway::domain::ModelVariantSettings {
+                reasoning_effort: Some("high".to_string()),
+                ..Default::default()
+            },
+        });
     let state = seeded_state(
         test_config(),
         vec![e],
@@ -966,16 +968,17 @@ async fn e2e_anthropic_variant_sets_thinking() {
     let mock = MockUpstream::default();
     let base = spawn_mock(mock.clone()).await;
     let mut e = mock_entry(&base, ANTHROPIC_PKG, "mock-anth");
-    e.variants.push(frank_opencode::domain::ModelVariant {
-        id: "high".to_string(),
-        settings: frank_opencode::domain::ModelVariantSettings {
-            thinking: Some(frank_opencode::domain::ThinkingConfig::Typed {
-                kind: "adaptive".to_string(),
-                display: Some("summarized".to_string()),
-            }),
-            ..Default::default()
-        },
-    });
+    e.variants
+        .push(opencode_claude_gateway::domain::ModelVariant {
+            id: "high".to_string(),
+            settings: opencode_claude_gateway::domain::ModelVariantSettings {
+                thinking: Some(opencode_claude_gateway::domain::ThinkingConfig::Typed {
+                    kind: "adaptive".to_string(),
+                    display: Some("summarized".to_string()),
+                }),
+                ..Default::default()
+            },
+        });
     let state = seeded_state(
         test_config(),
         vec![e],
@@ -1001,13 +1004,14 @@ async fn e2e_unrepresentable_anthropic_variant_is_400() {
     let base = spawn_mock(mock.clone()).await;
     let mut e = mock_entry(&base, ANTHROPIC_PKG, "mock-anth");
     // `reasoningEffort` has no Messages API parameter: must fail loudly.
-    e.variants.push(frank_opencode::domain::ModelVariant {
-        id: "high".to_string(),
-        settings: frank_opencode::domain::ModelVariantSettings {
-            reasoning_effort: Some("high".to_string()),
-            ..Default::default()
-        },
-    });
+    e.variants
+        .push(opencode_claude_gateway::domain::ModelVariant {
+            id: "high".to_string(),
+            settings: opencode_claude_gateway::domain::ModelVariantSettings {
+                reasoning_effort: Some("high".to_string()),
+                ..Default::default()
+            },
+        });
     let state = seeded_state(
         test_config(),
         vec![e],
@@ -1033,16 +1037,17 @@ async fn e2e_count_tokens_applies_variant_and_catalog_body() {
     let base = spawn_mock(mock.clone()).await;
     let mut e = mock_entry(&base, ANTHROPIC_PKG, "mock-anth");
     e.body = Some(json!({"speed": "fast"}));
-    e.variants.push(frank_opencode::domain::ModelVariant {
-        id: "high".to_string(),
-        settings: frank_opencode::domain::ModelVariantSettings {
-            thinking: Some(frank_opencode::domain::ThinkingConfig::Typed {
-                kind: "adaptive".to_string(),
-                display: None,
-            }),
-            ..Default::default()
-        },
-    });
+    e.variants
+        .push(opencode_claude_gateway::domain::ModelVariant {
+            id: "high".to_string(),
+            settings: opencode_claude_gateway::domain::ModelVariantSettings {
+                thinking: Some(opencode_claude_gateway::domain::ThinkingConfig::Typed {
+                    kind: "adaptive".to_string(),
+                    display: None,
+                }),
+                ..Default::default()
+            },
+        });
     let state = seeded_state(
         test_config(),
         vec![e],
@@ -1108,7 +1113,7 @@ const RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(5);
 
 fn shim_dir() -> PathBuf {
     std::env::temp_dir().join(format!(
-        "frank-retry-{}-{:?}",
+        "ocg-retry-{}-{:?}",
         std::process::id(),
         std::thread::current().id()
     ))
@@ -1124,7 +1129,7 @@ enum ShimPhase {
 
 fn shim_state_file() -> PathBuf {
     std::env::temp_dir().join(format!(
-        "frank-retry-state-{}-{:?}",
+        "ocg-retry-state-{}-{:?}",
         std::process::id(),
         std::thread::current().id()
     ))

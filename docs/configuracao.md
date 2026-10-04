@@ -9,13 +9,35 @@ como o gateway resolve modelos e aliases.
 
 ## Arquivo e overrides
 
-Arquivo: `~/.config/frank-opencode/config.toml` (veja
+Arquivo: `~/.config/opencode-claude-gateway/config.toml` (veja
 [`config.example.toml`](../config.example.toml)).
-Overrides por env: `FRANK_PORT`, `FRANK_AUTH_TOKEN`, `FRANK_CONFIG`.
-`FRANK_AUTH_TOKEN` (quando não-vazio) sobrescreve o `auth_token` do arquivo.
+**No primeiro run** o arquivo é criado automaticamente com todas as opções
+comentadas (0600) — descomente e edite o que precisar. Paths informados via
+`--config`/`OCG_CONFIG` não são criados (se não existir, valem os defaults).
+Overrides por env: `OCG_PORT`, `OCG_AUTH_TOKEN`, `OCG_CONFIG`.
+`OCG_AUTH_TOKEN` (quando não-vazio) sobrescreve o `auth_token` do arquivo.
 
 O config é lido **no boot** — mudanças exigem reiniciar o gateway
-(`frank-opencode --disable && frank-opencode --enable`).
+(`ocg --stop && ocg --start`).
+
+## Auto-start no login (`--enable` / `--disable`)
+
+`ocg --enable` instala um systemd user service
+(`~/.config/systemd/user/ocg.service`, `ExecStart=<bin> --serve`) e o habilita
+para iniciar no login; `ocg --disable` remove tudo. Separação estrita: esses
+comandos **não** sobem nem param o gateway — use `ocg --start` / `ocg --stop`
+para o ciclo de vida. `ocg --status` mostra os dois estados.
+
+O serviço roda direto o executável com `--serve`: porta e `auth_token` vêm
+**do arquivo de config** (envs do shell, como `OCG_PORT`, não chegam ao
+serviço). Com `--config` no momento do `--enable`, o caminho é gravado na unit.
+
+```bash
+ocg --enable                 # liga o auto-start (não sobe agora)
+ocg --start                  # sobe agora (se quiser)
+systemctl --user status ocg  # inspeciona o serviço
+ocg --disable                # remove o auto-start (não para o gateway)
+```
 
 ## Autenticação do gateway (`auth_token`)
 
@@ -26,34 +48,33 @@ Por padrão `auth_token = ""`: o gateway aceita qualquer credencial
 # 1. Gere um token
 openssl rand -hex 32
 
-# 2. Salve no config do gateway
-mkdir -p ~/.config/frank-opencode
-# edite ~/.config/frank-opencode/config.toml:
+# 2. Salve no config do gateway (arquivo criado no primeiro run)
+# edite ~/.config/opencode-claude-gateway/config.toml:
 #   auth_token = "SEU_TOKEN_AQUI"
 
 # 3. Reinicie o gateway para valer (o config é lido no boot)
-frank-opencode --disable
-frank-opencode --enable   # ou --enable --port XXXX se usa porta custom
+ocg --stop
+ocg --start   # ou --start --port XXXX se usa porta custom
 
 # 4. Use o MESMO valor no Claude Code (ver docs/config-cli.md)
 export ANTHROPIC_AUTH_TOKEN="SEU_TOKEN_AQUI"
 ```
 
-Alternativa sem editar arquivo (teste / efêmero): exporte `FRANK_AUTH_TOKEN`
-antes do `--enable` — ele sobrescreve o arquivo e é herdado pelo daemon filho.
+Alternativa sem editar arquivo (teste / efêmero): exporte `OCG_AUTH_TOKEN`
+antes do `--start` — ele sobrescreve o arquivo e é herdado pelo daemon filho.
 
 Regras:
 
 - Quando setado, todo endpoint exceto `GET /health` exige o token, via
   `x-api-key: <token>` **ou** `Authorization: Bearer <token>`.
 - Token errado/ausente → `401 {"error":{"type":"authentication_error",...}}`.
-- Trocar o token exige reiniciar (`--disable` + `--enable`); só editar o
+- Trocar o token exige reiniciar (`--stop` + `--start`); só editar o
   arquivo não afeta o daemon já rodando.
 
 ## Modelo padrão (`default_model`)
 
 Quando o cliente POSTa sem `"model"`, o gateway usa o `default_model` do
-`~/.config/frank-opencode/config.toml` — **não** o `model` do
+`~/.config/opencode-claude-gateway/config.toml` — **não** o `model` do
 `~/.claude/settings.json` (um diz o que o gateway usa no fallback, o outro
 o que o Claude pede). Vazio = primeiro alias em ordem alfabética, que hoje
 costuma ser um `claude-github-copilot-...` (`g` < `o`), não o seu modelo de

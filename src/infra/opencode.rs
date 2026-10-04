@@ -1,4 +1,4 @@
-//! Infra: how frank-opencode reads OpenCode v2 state.
+//! Infra: how opencode-claude-gateway reads OpenCode v2 state.
 //!
 //! Rules (OpenCode v2):
 //! - Credentials live in SQLite `opencode.db`, table `credential`.

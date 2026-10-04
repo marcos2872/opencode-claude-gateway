@@ -80,7 +80,7 @@ como o `cargo test --all-targets` do job `test` — rodam e reportam, sem reprov
 ```bash
 cargo test --test perf -- --nocapture                                    # debug: só reporta
 cargo test --release --test perf -- --nocapture --test-threads=1         # release: força os orçamentos
-FRANK_PERF_P95_MS=25 cargo test --release --test perf                    # sobrepõe TODOS os cenários
+OCG_PERF_P95_MS=25 cargo test --release --test perf                    # sobrepõe TODOS os cenários
 ```
 
 Para encarecer o cenário, aumente `FILLER_LINES` em `realistic_body`.
@@ -103,8 +103,8 @@ Níveis de log — `trace` é o "all", do mais ao menos verboso:
 RUST_LOG=trace cargo run -- --serve --port 3737   # tudo, incluindo hyper/reqwest/tokio
 RUST_LOG=debug cargo run -- --serve --port 3737   # meio-termo, menos spam que trace
 # só o projeto, sem o barulho das dependências:
-RUST_LOG=frank_opencode=trace cargo run -- --serve --port 3737
-RUST_LOG=frank_opencode=trace cargo run -- --serve --port 3737 2>&1 | tee ./frank-dev.log
+RUST_LOG=opencode_claude_gateway=trace cargo run -- --serve --port 3737
+RUST_LOG=opencode_claude_gateway=trace cargo run -- --serve --port 3737 2>&1 | tee ./ocg-dev.log
 # projeto em trace, dependências em warn:
 RUST_LOG=trace,hyper=warn,reqwest=warn,tokio=warn cargo run -- --serve --port 3737
 ```
@@ -123,16 +123,16 @@ curl -s http://127.0.0.1:3737/v1/models | jq -r '.data[0].id'
 
 Quando um upstream rejeita um `/responses` traduzido, o log só tem contagens
 (`request_summary`), nunca o corpo — impossível dizer qual campo quebrou.
-`FRANK_DUMP_RESPONSES_BODY` grava o JSON exato que seria enviado:
+`OCG_DUMP_RESPONSES_BODY` grava o JSON exato que seria enviado:
 
 ```bash
-mkdir -p /tmp/frank-dump
-FRANK_DUMP_RESPONSES_BODY=/tmp/frank-dump \
-  RUST_LOG=frank_opencode=warn cargo run -- --serve --port 3737
+mkdir -p /tmp/ocg-dump
+OCG_DUMP_RESPONSES_BODY=/tmp/ocg-dump \
+  RUST_LOG=opencode_claude_gateway=warn cargo run -- --serve --port 3737
 # valor "1" (ou vazio) grava no diretório temporário do sistema
 ```
 
-Cada request gera `frank-resp-dump-<nanos>-<modelo>.json` e uma linha
+Cada request gera `ocg-resp-dump-<nanos>-<modelo>.json` e uma linha
 `dumped translated responses body path=...` (WARN) — cruze pelo horário com
 `upstream rejected request` para achar o corpo que falhou. Com o dump em mãos,
 replay/bisseção contra o upstream:
@@ -144,7 +144,7 @@ python3 scripts/replay_responses.py <dump.json> full
 
 ⚠️ O dump contém o **conteúdo integral do prompt** (diferente do log, que só
 tem contagens). Não commite, não publique; apague após o diagnóstico
-(`rm -rf /tmp/frank-dump`).
+(`rm -rf /tmp/ocg-dump`).
 
 Útil para diagnosticar `400 The request contains invalid parameters` — ex.: o
 sintoma que levou à regra de defer em `infra/upstream/responses.rs` (texto de
@@ -161,7 +161,7 @@ boot, então após mudar aliases/código:
 ```bash
 # 1. Gateway com catálogo fresco (mata o --serve antigo e sobe de novo)
 curl -s http://127.0.0.1:3737/health  # confira "models" != 0
-# daemon: frank-opencode --disable && frank-opencode --enable
+# daemon: ocg --stop && ocg --start
 # foreground: cargo run -- --serve --port 3737
 
 # 2. Confere o novo mapeamento (zero dup, fast com alias próprio)
@@ -184,7 +184,7 @@ no `/model` reescreve o campo.
 
 ```bash
 cargo install --path .
-# depois `frank-opencode` fica no PATH
+# depois `ocg` fica no PATH
 ```
 
 ## Publicando releases
@@ -200,12 +200,14 @@ git push origin v0.1.0   # a action builda e anexa o binário à release
 ## Daemon
 
 ```bash
-frank-opencode --enable [--port 3737]   # pidfile ~/.local/share/frank-opencode/frank.pid
-frank-opencode --status
-frank-opencode --disable
+ocg --start [--port 3737]   # pidfile ~/.local/share/opencode-claude-gateway/ocg.pid
+ocg --status
+ocg --stop
+ocg --enable                # auto-start no login (systemd user service)
+ocg --disable               # remove o auto-start
 ```
 
-Logs: `~/.local/share/frank-opencode/frank.log`.
+Logs: `~/.local/share/opencode-claude-gateway/ocg.log`.
 
 ## Estado de build
 

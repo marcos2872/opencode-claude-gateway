@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// Gateway alias exposed on `GET /v1/models`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AliasEntry {
-    /// ID seen by Claude Code, e.g. `claude-sonnet-4-6-frank`.
+    /// ID seen by Claude Code, e.g. `claude-sonnet-4-6-ocg`.
     pub gateway_id: String,
     /// OpenCode reference, e.g. `opencode-go/kimi-k2.7-code`.
     pub opencode_ref: String,
@@ -306,7 +306,7 @@ pub fn auto_aliases_for(entries: &[CatalogEntry], opts: AliasOptions) -> Vec<Ali
             gateway_id: candidate,
             opencode_ref: opencode_ref.clone(),
             display_name: format!("{} ({})", e.name, e.provider_id),
-            description: format!("via frank-opencode · {opencode_ref}"),
+            description: format!("via ocg · {opencode_ref}"),
             context_window: e.context_window(),
             family_tier: None,
             family_default: false,

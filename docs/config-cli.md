@@ -44,7 +44,7 @@ pré-visualiza o catálogo (reinicie o gateway para recarregar).
 ## Fixando o modelo dos subagentes
 
 O Claude Code pode escolher automaticamente um modelo para subagentes como
-`Explore` e `general-purpose`. Quando a sessão usa o frank-opencode, fixe esse
+`Explore` e `general-purpose`. Quando a sessão usa o ocg, fixe esse
 modelo em um id que exista no catálogo do gateway para evitar erros como
 `model_not_found` com um id de snapshot da Anthropic que o OpenCode não oferece.
 

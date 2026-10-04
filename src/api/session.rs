@@ -14,14 +14,14 @@ static FALLBACK_SESSION: OnceLock<String> = OnceLock::new();
 fn fallback_session_id() -> String {
     FALLBACK_SESSION
         .get_or_init(|| {
-            let path = AppConfig::data_dir().join("frank.session");
+            let path = AppConfig::data_dir().join("ocg.session");
             if let Ok(s) = std::fs::read_to_string(&path) {
                 let s = s.trim().to_string();
                 if !s.is_empty() {
                     return s;
                 }
             }
-            let id = format!("frank-{}", uuid::Uuid::new_v4());
+            let id = format!("ocg-{}", uuid::Uuid::new_v4());
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }

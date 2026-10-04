@@ -1,4 +1,4 @@
-# ports below are examples; use --port or FRANK_PORT to change
+# ports below are examples; use --port or OCG_PORT to change
 port = 3737
 
 # Token Claude Code sends (ANTHROPIC_AUTH_TOKEN). Empty = accept any (localhost only).

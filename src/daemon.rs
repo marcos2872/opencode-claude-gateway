@@ -1,8 +1,9 @@
-//! Daemon lifecycle: --enable / --disable / --status.
+//! Daemon lifecycle: --start / --stop / --status.
+//! (Auto-start on login is systemd's job: see `autostart`, --enable/--disable.)
 //!
-//! pidfile: ~/.local/share/frank-opencode/frank.pid
-//! portfile: ~/.local/share/frank-opencode/frank.port
-//! log: ~/.local/share/frank-opencode/frank.log
+//! pidfile: ~/.local/share/opencode-claude-gateway/ocg.pid
+//! portfile: ~/.local/share/opencode-claude-gateway/ocg.port
+//! log: ~/.local/share/opencode-claude-gateway/ocg.log
 
 use std::fs;
 use std::path::PathBuf;
@@ -15,15 +16,15 @@ fn dir() -> PathBuf {
 }
 
 pub fn pid_file() -> PathBuf {
-    dir().join("frank.pid")
+    dir().join("ocg.pid")
 }
 
 pub fn port_file() -> PathBuf {
-    dir().join("frank.port")
+    dir().join("ocg.port")
 }
 
 pub fn log_file() -> PathBuf {
-    dir().join("frank.log")
+    dir().join("ocg.log")
 }
 
 fn read_pid() -> Option<u32> {
@@ -87,18 +88,18 @@ pub fn stored_port() -> Option<u16> {
     fs::read_to_string(port_file()).ok()?.trim().parse().ok()
 }
 
-/// Enable: spawn detached child running `--serve`, wait for /health.
-pub fn enable(port: u16, config_arg: Option<PathBuf>) -> anyhow::Result<()> {
+/// Start: spawn detached child running `--serve`, wait for /health.
+pub fn start(port: u16, config_arg: Option<PathBuf>) -> anyhow::Result<()> {
     if let Some(pid) = read_pid() {
         if pid_alive(pid) {
             let running = stored_port().unwrap_or(crate::config::DEFAULT_PORT);
             if running != port {
                 anyhow::bail!(
-                    "frank-opencode already running on :{running} (pid {pid}); \
-                     run `frank-opencode --disable` first to move it to :{port}"
+                    "ocg already running on :{running} (pid {pid}); \
+                     run `ocg --stop` first to move it to :{port}"
                 );
             }
-            println!("frank-opencode already running (pid {pid}, port {running})");
+            println!("ocg already running (pid {pid}, port {running})");
             print_next_steps(running);
             return Ok(());
         }
@@ -152,7 +153,7 @@ pub fn enable(port: u16, config_arg: Option<PathBuf>) -> anyhow::Result<()> {
         std::thread::sleep(std::time::Duration::from_millis(200));
         if gateway_healthy(port) {
             println!(
-                "frank-opencode enabled on http://127.0.0.1:{port} (pid {})",
+                "ocg started on http://127.0.0.1:{port} (pid {})",
                 child.id()
             );
             print_next_steps(port);
@@ -170,16 +171,16 @@ pub fn enable(port: u16, config_arg: Option<PathBuf>) -> anyhow::Result<()> {
     )
 }
 
-/// Disable: SIGTERM the pidfile process, clean up.
-pub fn disable() -> anyhow::Result<()> {
+/// Stop: SIGTERM the pidfile process, clean up.
+pub fn stop() -> anyhow::Result<()> {
     let Some(pid) = read_pid() else {
-        println!("frank-opencode is not running (no pidfile)");
+        println!("ocg is not running (no pidfile)");
         return Ok(());
     };
     if !pid_alive(pid) {
         let _ = fs::remove_file(pid_file());
         let _ = fs::remove_file(port_file());
-        println!("frank-opencode was not running (stale pidfile removed)");
+        println!("ocg was not running (stale pidfile removed)");
         return Ok(());
     }
     #[cfg(unix)]
@@ -202,7 +203,7 @@ pub fn disable() -> anyhow::Result<()> {
     }
     let _ = fs::remove_file(pid_file());
     let _ = fs::remove_file(port_file());
-    println!("frank-opencode disabled (pid {pid} stopped)");
+    println!("ocg stopped (pid {pid} stopped)");
     Ok(())
 }
 
@@ -215,11 +216,17 @@ pub fn status() -> anyhow::Result<()> {
             } else {
                 "unreachable"
             };
-            println!("frank-opencode running (pid {pid}, port {port}, {h})");
+            println!("ocg running (pid {pid}, port {port}, {h})");
         }
-        Some(pid) => println!("frank-opencode pidfile exists but pid {pid} is dead"),
-        None => println!("frank-opencode is not running"),
+        Some(pid) => println!("ocg pidfile exists but pid {pid} is dead"),
+        None => println!("ocg is not running"),
     }
+    let auto = if crate::autostart::is_installed() {
+        "enabled"
+    } else {
+        "disabled"
+    };
+    println!("auto-start: {auto}");
     Ok(())
 }
 
@@ -243,7 +250,7 @@ mod tests {
 
     #[test]
     fn write_private_creates_0600() {
-        let dir = std::env::temp_dir().join("frank-perm-test");
+        let dir = std::env::temp_dir().join("ocg-perm-test");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join(format!("new-{}.txt", std::process::id()));
         let _ = std::fs::remove_file(&path);
@@ -255,7 +262,7 @@ mod tests {
 
     #[test]
     fn write_private_tightens_preexisting_file() {
-        let dir = std::env::temp_dir().join("frank-perm-test");
+        let dir = std::env::temp_dir().join("ocg-perm-test");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join(format!("pre-{}.txt", std::process::id()));
         std::fs::write(&path, "old").unwrap();
