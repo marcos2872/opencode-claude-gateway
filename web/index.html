@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>opencode-claude-gateway — seus modelos do opencode no Claude Code e no Claude Desktop</title>
 <meta name="description" content="Gateway local compatível com Anthropic que expõe os modelos do OpenCode v2 ao Claude Code. Escuta em 127.0.0.1:3737 e nunca fala com a Anthropic.">
+<link rel="icon" type="image/svg+xml" href="../assets/logo.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Arimo:wght@400;600;700&family=DM+Mono:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
@@ -93,10 +94,7 @@ p code,li code,td code,dd code,.lede code{
   letter-spacing:-.02em;text-decoration:none;white-space:nowrap;
   display:flex;align-items:center;gap:.45rem;
 }
-.mark::before{
-  content:"";width:9px;height:9px;background:var(--wire-b);flex:none;
-  clip-path:polygon(0 0,100% 50%,0 100%);
-}
+.mark-icon{width:24px;height:24px;border-radius:6px;display:block;flex:none}
 .bar nav{margin-left:auto;display:flex;gap:1.35rem;align-items:center}
 .bar nav a{
   font-family:var(--f-mono);font-size:.76rem;letter-spacing:.04em;
@@ -302,7 +300,7 @@ p code,li code,td code,dd code,.lede code{
 
 <header class="bar">
   <div class="wrap">
-    <a class="mark" href="#">ocg</a>
+    <a class="mark" href="#"><img class="mark-icon" src="../assets/logo.svg" alt="" width="24" height="24">ocg</a>
     <nav aria-label="Seções">
       <a href="#como">Como funciona</a>
       <a href="#instalar">Instalar</a>

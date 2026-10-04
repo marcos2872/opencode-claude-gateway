@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="assets/logo.svg" alt="opencode-claude-gateway" width="96" height="96">
+</div>
+
 # opencode-claude-gateway
 
 Gateway local compatível com Anthropic que expõe seus **modelos do OpenCode** (v2) ao **Claude Code** — sem precisar de uma chave da Anthropic.
