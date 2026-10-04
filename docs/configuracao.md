@@ -138,10 +138,10 @@ continuam encaminhadas normalmente, inclusive no modelo do Copilot selecionado.
 ## Edge do Codex (`responses_endpoint`)
 
 Além de `POST /v1/messages` (Claude Code / Claude Desktop), o gateway serve
-`POST /v1/responses` na dialecto **OpenAI Responses API**, que é o único
-dialecto que o Codex (Desktop/CLI) fala. A chave `responses_endpoint`
-(default `true`) liga/desliga só essa rota — com `false` o gateway volta a ser
-exclusivamente Anthropic. Modelos com upstream Chat/Anthropic respondem
+`POST /v1/responses` (dialecto **OpenAI Responses API**, o único que o Codex
+fala) e `GET /v1/models/codex` (catálogo nativo para o picker do Codex). A
+chave `responses_endpoint` (default `true`) liga/desliga as duas rotas — com
+`false` o gateway volta a ser exclusivamente Anthropic. Modelos com upstream Chat/Anthropic respondem
 `501 not_implemented` nesta porta até a Fase 2 do plano de compatibilidade.
 Setup completo do cliente em [Configuração no Codex](config-codex.md).
 

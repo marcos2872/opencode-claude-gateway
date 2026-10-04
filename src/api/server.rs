@@ -27,6 +27,14 @@ pub use super::state::{BOOT_CATALOG_ATTEMPTS, BOOT_CATALOG_BACKOFF, BOOT_CATALOG
 
 const MAX_REQUEST_BODY: usize = 64 * 1024 * 1024;
 
+/// Base instructions every catalog row carries. Codex's `ModelsResponse`
+/// deserializer rejects a model that has neither `base_instructions` nor
+/// `model_messages.instructions_template`, and an empty prompt would leave
+/// the agent without its harness rules. Derived from Codex's bundled model
+/// instructions (Apache-2.0), first sentence de-GPT'd — see
+/// `docs/config-codex.md`.
+const CODEX_BASE_INSTRUCTIONS: &str = include_str!("codex_base_instructions.txt");
+
 pub fn router(state: AppState) -> Router {
     let mut app = Router::new()
         .route("/health", get(health))
@@ -37,7 +45,11 @@ pub fn router(state: AppState) -> Router {
     // `require_token` like every other route; gated by `responses_endpoint`
     // (default on) so the Anthropic-only deployment can opt out.
     if state.config.responses_endpoint {
-        app = app.route("/v1/responses", post(responses));
+        app = app
+            .route("/v1/responses", post(responses))
+            // Codex-native catalog for `model_catalog_url` (the picker only
+            // decodes `{"models":[...]}`, not the OpenAI `/v1/models` shape).
+            .route("/v1/models/codex", get(codex_models));
     }
     app.route_layer(middleware::from_fn_with_state(state.clone(), require_token))
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY))
@@ -58,7 +70,10 @@ async fn require_token(
     }
     // Error shape follows the client edge: Codex (OpenAI dialect) cannot
     // parse the Anthropic `{"type":"error"}` body, and vice-versa.
-    let on_responses_edge = req.uri().path().starts_with("/v1/responses");
+    let on_codex_edge = {
+        let path = req.uri().path();
+        path.starts_with("/v1/responses") || path.starts_with("/v1/models/codex")
+    };
     let headers = req.headers();
     let bearer = headers
         .get("authorization")
@@ -71,7 +86,7 @@ async fn require_token(
         .unwrap_or("");
     if bearer == s.config.auth_token || key == s.config.auth_token {
         next.run(req).await
-    } else if on_responses_edge {
+    } else if on_codex_edge {
         openai_error(
             StatusCode::UNAUTHORIZED,
             "authentication_error",
@@ -148,6 +163,63 @@ async fn list_models(State(s): State<AppState>) -> impl IntoResponse {
         })
         .collect();
     Json(serde_json::json!({"object": "list", "data": data}))
+}
+
+/// Codex-native model catalog, served for the provider's `model_catalog_url`
+/// (`docs/config-codex.md`). The Codex picker decodes only
+/// `{"models": [ModelInfo...]}` — never the OpenAI `{"object":"list",
+/// "data":[...]}` shape of `/v1/models` — so this route reshapes the same
+/// alias rows into that dialect. Filtered to `Protocol::Responses` entries:
+/// everything else answers `501 not_implemented` on `/v1/responses` until
+/// Fase 2, and a picker full of dead models is worse than a short list.
+///
+/// Field set mirrors Codex's own `remote_model` fixture
+/// (`model-provider/src/provider.rs`); `context_window` carries the size so
+/// the `[1m]` display suffix from `/v1/models` is unnecessary here.
+async fn codex_models(State(s): State<AppState>) -> impl IntoResponse {
+    let aliases = s.aliases.read().await;
+    let catalog = s.catalog.read().await;
+    let mut models: Vec<Value> = vec![];
+    let mut priority = 0i32;
+    for a in aliases.iter() {
+        let Some(entry) = catalog
+            .iter()
+            .find(|e| e.qualified() == a.opencode_ref || e.id == a.opencode_ref)
+        else {
+            continue;
+        };
+        if protocol_for_entry(entry) != Protocol::Responses {
+            continue;
+        }
+        let mut item = serde_json::json!({
+            "slug": a.gateway_id,
+            "display_name": a.display_name,
+            "description": a.description,
+            "base_instructions": CODEX_BASE_INSTRUCTIONS,
+            "default_reasoning_level": "medium",
+            "supported_reasoning_levels": [
+                {"effort": "minimal", "description": "Minimal reasoning"},
+                {"effort": "low", "description": "Low reasoning"},
+                {"effort": "medium", "description": "Medium reasoning"},
+                {"effort": "high", "description": "High reasoning"},
+            ],
+            "shell_type": "unified_exec",
+            "visibility": "list",
+            "supported_in_api": true,
+            "priority": priority,
+            "support_verbosity": false,
+            "truncation_policy": {"mode": "bytes", "limit": 10000},
+            "experimental_supported_tools": [],
+        });
+        if let Some(w) = a.context_window {
+            let w = i64::try_from(w).unwrap_or(i64::MAX);
+            item["context_window"] = Value::from(w);
+            item["max_context_window"] = Value::from(w);
+        }
+        priority += 1;
+        models.push(item);
+    }
+    Json(serde_json::json!({ "models": models }))
 }
 
 async fn messages(

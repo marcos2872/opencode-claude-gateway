@@ -51,17 +51,22 @@ aceita (default localhost-only).
 
 ## Lado do Codex
 
-`~/.codex/config.toml`:
+`~/.codex/config.toml` — atenção: **`model` e `model_provider` são chaves de
+topo e precisam vir antes da primeira `[tabela]`** (TOML: tudo depois de um
+header de tabela pertence àquela tabela; colados no fim do arquivo, eles
+viram chaves de `shell_environment_policy` e são silenciosamente ignorados):
 
 ```toml
-model = "claude-opencode-go-grok-4-7"   # id em GET /v1/models (copie o anunciado)
+model = "claude-opencode-go-g-rok-4-7"   # id anunciado em GET /v1/models
 model_provider = "ocg"
+# model_reasoning_effort = "medium"      # já pode estar no topo do seu config
 
 [model_providers.ocg]
 name = "opencode-claude-gateway"
 base_url = "http://127.0.0.1:3737/v1"
-env_key = "OCG_AUTH_TOKEN"              # só se auth_token estiver setado no gateway
 wire_api = "responses"
+model_catalog_url = "http://127.0.0.1:3737/v1/models/codex"
+# env_key = "OCG_AUTH_TOKEN"            # só quando auth_token estiver setado
 ```
 
 `base_url` já inclui `/v1`: o Codex concatena `/responses` e bate em
@@ -71,12 +76,33 @@ dialecto que ele fala para providers custom). Suba o gateway antes
 env do shell**, então `OCG_AUTH_TOKEN` precisa estar na sessão do app ou o
 gateway rodar sem `auth_token` em localhost.
 
+## Modelos no picker (`model_catalog_url`)
+
+O Codex **não lê `GET /v1/models`** de providers custom: sem um catálogo
+nativo, o picker mostra só os modelos built-in (e a entrada do seu `model`
+aparece como "modelo personalizado" sem nome). A chave `model_catalog_url`
+do provider aponta para `GET /v1/models/codex`, que serve as mesmas aliases
+em forma **Codex-native** (`{"models": [...]}` — o único formato que o parser
+`ModelsResponse` decoda) e **filtra para modelos de upstream Responses**
+(os únicos que passam em `/v1/responses` na Fase 1).
+
+- Só aparecem linhas Responses (grok, gpt-*, muse, Copilot `g-*`); linhas
+  Claude/Chat continuam fora até a Fase 2.
+- Cada modelo carrega `base_instructions` (obrigatório para o decode do
+  Codex): texto derivado das instruções bundled do próprio Codex
+  (**Apache-2.0**, primeira frase neutralizada), para o harness
+  (`apply_patch`, regras de edição) continuar correto.
+- `context_window` vai como campo estruturado (sem sufixo `[1m]` no slug).
+- Depois de mudar o config, reinicie o Codex (o catálogo é cacheado em
+  `~/.codex/models_cache.json` com TTL de 5 min). Diagnóstico:
+  `codex debug models` deve listar os modelos do gateway.
+
 ## Erros comuns
 
 | Sintoma | Causa |
 |---|---|
 | `401 authentication_error` (shape OpenAI) | token errado/ausente — `env_key` ou `auth_token` do gateway. |
-| `404 not_found_error` | id do modelo fora do catálogo — copie o id de `GET /v1/models`. |
+| `404 not_found_error` | id do modelo fora do catálogo — copie o id de `GET /v1/models` (ou veja o picker com `model_catalog_url`). |
 | `501 not_implemented` (`code`) | modelo com upstream Chat/Anthropic — Fase 2 (use uma linha Responses). |
 | `response.failed` no meio do stream | upstream caiu/truncou; a garra do gateway reporta `response.error.message`. |
 | `403` de upstream `opencode/*` | free-tier fora do OpenCode (escondido no `/v1/models` a menos que `include_free_tier = true`). |

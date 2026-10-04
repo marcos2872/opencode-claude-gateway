@@ -466,3 +466,101 @@ async fn codex_endpoint_can_be_disabled() {
     assert_eq!(v["type"], "error");
     assert_eq!(v["error"]["type"], "not_found_error");
 }
+
+// ---------------------------------------------------------------------------
+// Catálogo nativo para o picker do Codex (`model_catalog_url` →
+// GET /v1/models/codex). Sem upstream: só a moldura `{"models":[...]}` que
+// o parser `ModelsResponse` do Codex decoda.
+// ---------------------------------------------------------------------------
+
+/// Campos obrigatórios do `ModelInfo` (fixture `remote_model` em
+/// `model-provider/src/provider.rs` do Codex): sem eles o decode falha e o
+/// picker não mostra nada.
+const CODEX_REQUIRED_MODEL_FIELDS: [&str; 11] = [
+    "slug",
+    "display_name",
+    // Sem isto o `ModelsResponse` do Codex rejeita o decode inteiro
+    // ("missing both `base_instructions` and `model_messages...`").
+    "base_instructions",
+    "supported_reasoning_levels",
+    "shell_type",
+    "visibility",
+    "supported_in_api",
+    "priority",
+    "support_verbosity",
+    "truncation_policy",
+    "experimental_supported_tools",
+];
+
+#[tokio::test]
+async fn codex_model_catalog_lists_responses_models_only() {
+    let base = "http://127.0.0.1:9";
+    let mut windowed = alias("claude-codex-grok", "opencode/mock-codex");
+    windowed.context_window = Some(256_000);
+    let state = seeded_state(
+        test_config(),
+        vec![
+            mock_entry(base, RESPONSES_PKG, "mock-codex"),
+            mock_entry(base, CHAT_PKG, "mock-chat"),
+        ],
+        vec![windowed, alias("claude-codex-chat", "opencode/mock-chat")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let resp = server
+        .get("/v1/models/codex")
+        .add_header("authorization", format!("Bearer {TOKEN}"))
+        .await;
+    assert_eq!(resp.status_code(), 200);
+    let v: Value = resp.json();
+    // Só a linha Responses; a Chat responderia 501 em /v1/responses.
+    let models = v["models"].as_array().expect("`models` array");
+    assert_eq!(models.len(), 1, "{v}");
+    let m = &models[0];
+    assert_eq!(m["slug"], "claude-codex-grok");
+    for k in CODEX_REQUIRED_MODEL_FIELDS {
+        assert!(m.get(k).is_some(), "missing `{k}` in {v}");
+    }
+    assert!(!m["base_instructions"].as_str().unwrap().is_empty(), "{v}");
+    assert_eq!(m["visibility"], "list");
+    assert_eq!(m["supported_in_api"], true);
+    assert_eq!(m["shell_type"], "unified_exec");
+    assert_eq!(m["truncation_policy"]["mode"], "bytes");
+    assert_eq!(m["truncation_policy"]["limit"], 10000);
+    // Janela como campo estruturado — slug sem sufixo `[1m]`.
+    assert_eq!(m["context_window"], 256_000);
+    assert_eq!(m["max_context_window"], 256_000);
+    assert!(!m["slug"].as_str().unwrap().contains('['));
+    // Níveis de raciocínio no formato {effort, description}.
+    let levels = m["supported_reasoning_levels"].as_array().unwrap();
+    assert!(levels.len() >= 2, "{v}");
+    assert_eq!(levels[0]["effort"], "minimal");
+    assert!(levels[0]["description"].is_string());
+}
+
+#[tokio::test]
+async fn codex_model_catalog_requires_token_in_openai_shape() {
+    let state = seeded_state(test_config(), vec![], vec![]).await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let resp = server.get("/v1/models/codex").await;
+    assert_eq!(resp.status_code(), 401);
+    let v: Value = resp.json();
+    assert!(v.get("type").is_none(), "{v}");
+    assert_eq!(v["error"]["type"], "authentication_error");
+}
+
+#[tokio::test]
+async fn codex_model_catalog_hidden_when_endpoint_disabled() {
+    let config = AppConfig {
+        auth_token: TOKEN.to_string(),
+        responses_endpoint: false,
+        ..AppConfig::default()
+    };
+    let state = seeded_state(config, vec![], vec![]).await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let resp = server
+        .get("/v1/models/codex")
+        .add_header("authorization", format!("Bearer {TOKEN}"))
+        .await;
+    assert_eq!(resp.status_code(), 404);
+}

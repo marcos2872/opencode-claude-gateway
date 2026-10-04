@@ -112,8 +112,14 @@ Layers:
   (body/SSE byte-for-byte + catalog variant/defaults + terminal-event claw:
   upstream truncation before `response.completed` emits a synthetic
   `response.failed` before EOF); Chat/Anthropic upstreams get
-  `501 not_implemented` until Fase 2. Gated by `config.responses_endpoint`
-  (default true).
+  `501 not_implemented` until Fase 2. Also under that flag:
+  `GET /v1/models/codex` — the Codex-native catalog for the provider's
+  `model_catalog_url` (`{"models":[...]}`, the only shape Codex's
+  `ModelsResponse` decodes), same alias rows filtered to Responses-upstream
+  models, each carrying `base_instructions` (required by the Codex decoder;
+  derived from Codex's bundled prompt, Apache-2.0, in
+  `src/api/codex_base_instructions.txt`). Gated by
+  `config.responses_endpoint` (default true).
 
 ## Conventions & gotchas
 
@@ -163,7 +169,10 @@ Layers:
   `session-id`/`thread-id` headers feed `x-opencode-session` only after the
   Claude headers are checked, so the Claude path is byte-identical. Codex
   tests live in the self-contained `tests/codex.rs`; `tests/gateway.rs`
-  stays Claude-only on purpose (compatibility canary).
+  stays Claude-only on purpose (compatibility canary). Codex's picker lists
+  models via `GET /v1/models/codex` (`model_catalog_url` in
+  `~/.codex/config.toml`); TOML gotcha: top-level `model`/`model_provider`
+  keys must sit before the first `[table]` or they silently join that table.
 - **Catalog is read once** in a background task after bind (no periodic refresh;
   remove/restart to pick up new models, `--refresh` previews what boot would
   load). `/health` stays `starting` until that first load, `degraded` after a
