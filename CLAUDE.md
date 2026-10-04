@@ -9,6 +9,7 @@ cargo test                    # unit + integration tests (tests/gateway.rs, test
 cargo test --test gateway     # only the e2e gateway tests
 cargo test --test perf        # proxy translation latency (report-only in debug)
 cargo test <name>             # single test by name substring
+cargo llvm-cov --locked --all-targets --summary-only  # cobertura (requer llvm-tools-preview + cargo-llvm-cov)
 cargo clippy -- -D warnings   # must stay clean
 cargo fmt --check             # must stay clean
 cargo run -- --refresh        # print catalog + gateway aliases, exit
