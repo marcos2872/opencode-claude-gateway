@@ -1,7 +1,7 @@
 # Desenvolvimento
 
 [← README](../README.md) · [Configuração](configuracao.md) · [CLI](config-cli.md) ·
-[Desktop](config-desktop.md) · [Erros](erros.md) · **Dev** ·
+[Desktop](config-desktop.md) · [Codex](config-codex.md) · [Erros](erros.md) · **Dev** ·
 [Arquitetura](arquitetura.md)
 
 Pré-requisitos: Rust stable, `opencode` v2 logado (`opencode auth login`).
@@ -219,4 +219,5 @@ Logs: `~/.local/share/opencode-claude-gateway/ocg.log`.
 
 - [Arquitetura](arquitetura.md) — estrutura do código (domínio, infra, API).
 - [Configuração do gateway](configuracao.md) — opções de `config.toml`.
+- [Configuração no Codex](config-codex.md) — a segunda borda de cliente (`/v1/responses`).
 - [Erros e diagnóstico](erros.md) — sintomas comuns e logs.

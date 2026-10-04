@@ -3,16 +3,16 @@
 //! Protocol-specific headers (Anthropic version/beta) stay in their forward.
 
 use super::errors::{
-    anthropic_error, log_upstream_error, request_summary, response_failure_message,
-    upstream_error_response,
+    anthropic_error, log_upstream_error, openai_error, openai_error_response, request_summary,
+    response_failure_message, upstream_error_response,
 };
 use super::session::session_headers;
 use super::state::AppState;
 use crate::domain::CatalogEntry;
 use crate::infra::upstream::{
     anthropic_to_openai, anthropic_to_responses, apply_variant, apply_variant_checked, join_url,
-    openai_to_anthropic, responses_to_anthropic, sse, sse_error, with_heartbeat,
-    ResponsesTranslator, StreamTranslator,
+    openai_to_anthropic, responses_sse_error, responses_to_anthropic, sse, sse_error,
+    with_heartbeat, ResponsesTranslator, StreamTranslator,
 };
 use axum::{
     body::Body,
@@ -147,6 +147,23 @@ async fn send_json(
     }
 }
 
+/// [`send_json`] for the `/v1/responses` Codex edge: same plumbing, but the
+/// failure comes back in the OpenAI error shape (Codex cannot parse the
+/// Anthropic one).
+async fn send_json_openai(
+    req: reqwest::RequestBuilder,
+    body: &Value,
+) -> Result<reqwest::Response, Box<Response>> {
+    match req.json(body).send().await {
+        Ok(r) => Ok(r),
+        Err(e) => Err(Box::new(openai_error(
+            StatusCode::BAD_GATEWAY,
+            "server_error",
+            &format!("upstream unreachable: {e}"),
+        ))),
+    }
+}
+
 /// A non-2xx upstream status: log the privacy-safe summary and return the
 /// normalized Anthropic error shape. `summary_body` is whatever the caller
 /// logged before (the Anthropic forward logs its mutated body, the translated
@@ -194,6 +211,60 @@ fn drain_sse_payloads(buf: &mut Vec<u8>) -> Vec<String> {
         out.push(payload.to_string());
     }
     out
+}
+
+/// Byte-passthrough watchdog for the `/v1/responses` (Codex) edge: Codex
+/// rejects EOF without a terminal event (`ApiError::Stream`) and its parser
+/// treats bare `error` frames as no-ops, so an upstream that dies mid-stream
+/// would leave the client waiting the full 300s idle timeout. Watch the
+/// payloads as they flow through untouched and, if the stream ends (EOF or
+/// read error) before `response.completed` / `response.incomplete` /
+/// `response.failed`, emit a synthetic `response.failed` as the last frame.
+fn responses_terminal_claw<S>(
+    inner: S,
+) -> impl futures::Stream<Item = Result<Vec<u8>, std::io::Error>>
+where
+    S: futures::Stream<Item = Result<Vec<u8>, std::io::Error>>,
+{
+    async_stream::stream! {
+        let mut inner = Box::pin(inner);
+        let mut scan: Vec<u8> = vec![];
+        let mut terminal = false;
+        let mut failure: Option<String> = None;
+        while let Some(chunk) = inner.next().await {
+            let bytes = match chunk {
+                Ok(b) => b,
+                Err(e) => {
+                    failure = Some(format!("upstream stream read failed: {e}"));
+                    break;
+                }
+            };
+            if !terminal {
+                scan.extend_from_slice(&bytes);
+                for payload in drain_sse_payloads(&mut scan) {
+                    let Ok(v) = serde_json::from_str::<Value>(&payload) else { continue; };
+                    if matches!(
+                        v.get("type").and_then(|t| t.as_str()),
+                        Some("response.completed" | "response.incomplete" | "response.failed")
+                    ) {
+                        terminal = true;
+                        break;
+                    }
+                }
+            }
+            yield Ok(bytes);
+        }
+        if !terminal {
+            let (code, message) = match failure {
+                Some(e) => ("upstream_stream_error", e),
+                None => (
+                    "stream_closed",
+                    "upstream stream closed before response.completed".to_string(),
+                ),
+            };
+            yield Ok(responses_sse_error(code, &message).into_bytes());
+        }
+    }
 }
 
 /// The empty text-block start both translated streams emit when the upstream
@@ -477,6 +548,90 @@ pub(crate) async fn forward_responses(ctx: ForwardCtx<'_>) -> Response {
         }
     };
     sse_stream_response(out)
+}
+
+/// Fase 1 (edge Codex): `POST /v1/responses` → upstream Responses,
+/// byte-for-byte nas duas direções. Só entradas `Protocol::Responses`
+/// chegam aqui (o handler trava as demais com 501); upstreams Chat/Anthropic
+/// esperam a Fase 2 (tradução canônica).
+///
+/// O corpo do Codex segue quase intacto — só o `model` muda (mais a variante
+/// e os defaults do catálogo, mesma semântica dos outros caminhos: a variante
+/// do catálogo sobrepõe o `reasoning.effort` do cliente). Campos desconhecidos
+/// (`prompt_cache_key`, `client_metadata`, ...) seguem no corpo; se o backend
+/// Go rejeitar (400), `OCG_DUMP_RESPONSES_BODY` grava este corpo final para
+/// bisseção com `scripts/replay_responses.py`.
+pub(crate) async fn forward_responses_passthrough(ctx: ForwardCtx<'_>) -> Response {
+    let ForwardCtx {
+        s,
+        headers,
+        body,
+        entry,
+        base,
+        bearer,
+        gateway_model,
+        stream,
+        variant,
+    } = ctx;
+    let mut upstream_body = body.clone();
+    upstream_body["model"] = Value::String(entry.model_id.clone());
+    if let Some(v) = variant {
+        upstream_body = apply_variant(upstream_body, entry, v);
+    }
+    apply_entry_body(&mut upstream_body, entry);
+    dump_translated_body(&upstream_body, gateway_model);
+    let url = join_url(base, "responses");
+    let req = with_session_headers(
+        with_entry_headers(upstream_post(s, &url, bearer), entry),
+        headers,
+    );
+    let resp = match send_json_openai(req, &upstream_body).await {
+        Ok(r) => r,
+        Err(e) => return *e,
+    };
+    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        log_upstream_error(
+            entry,
+            gateway_model,
+            base,
+            status,
+            &text,
+            &request_summary(&upstream_body),
+            headers,
+        );
+        return openai_error_response(status, &text);
+    }
+    if !stream {
+        // Non-stream (cortesia: o Codex sempre pede stream) — repassa o JSON
+        // do upstream, reescrevendo `model` para o id do gateway.
+        let mut v: Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                return openai_error(
+                    StatusCode::BAD_GATEWAY,
+                    "server_error",
+                    &format!("invalid upstream JSON: {e}"),
+                )
+            }
+        };
+        if v.get("model").is_some() {
+            v["model"] = Value::String(gateway_model.to_string());
+        }
+        if let Some(uid) = v.get("id").and_then(|x| x.as_str()) {
+            tracing::debug!(upstream_id = uid, model = gateway_model, "upstream ok");
+        }
+        return Json(v).into_response();
+    }
+    // Streaming: byte passthrough atrás da garra de evento terminal; o
+    // heartbeat (em `sse_stream_response`) alimenta o idle timer de 300s do
+    // Codex durante pausas longas de raciocínio (`{"type":"ping"}` é um
+    // type desconhecido, ignorado com segurança pelo parser).
+    let inner = resp
+        .bytes_stream()
+        .map(|c| c.map(|b| b.to_vec()).map_err(std::io::Error::other));
+    sse_stream_response(responses_terminal_claw(inner))
 }
 
 pub(crate) async fn forward_openai(ctx: ForwardCtx<'_>) -> Response {

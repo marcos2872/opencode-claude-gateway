@@ -4,8 +4,10 @@
 //! (`api::server::{router, AppState, ...}`).
 
 use super::count_tokens::count_tokens;
-use super::errors::anthropic_error;
-use super::forward::{forward_anthropic, forward_openai, forward_responses, ForwardCtx};
+use super::errors::{anthropic_error, openai_error, openai_error_code};
+use super::forward::{
+    forward_anthropic, forward_openai, forward_responses, forward_responses_passthrough, ForwardCtx,
+};
 use super::mock::mock_check_response;
 pub use super::state::AppState;
 use crate::domain::{protocol_for_entry, strip_window_suffix, window_suffix, Protocol};
@@ -26,12 +28,18 @@ pub use super::state::{BOOT_CATALOG_ATTEMPTS, BOOT_CATALOG_BACKOFF, BOOT_CATALOG
 const MAX_REQUEST_BODY: usize = 64 * 1024 * 1024;
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let mut app = Router::new()
         .route("/health", get(health))
         .route("/v1/models", get(list_models))
         .route("/v1/messages/count_tokens", post(count_tokens))
-        .route("/v1/messages", post(messages))
-        .route_layer(middleware::from_fn_with_state(state.clone(), require_token))
+        .route("/v1/messages", post(messages));
+    // Codex/OpenAI edge. Registered before the auth layer so it inherits
+    // `require_token` like every other route; gated by `responses_endpoint`
+    // (default on) so the Anthropic-only deployment can opt out.
+    if state.config.responses_endpoint {
+        app = app.route("/v1/responses", post(responses));
+    }
+    app.route_layer(middleware::from_fn_with_state(state.clone(), require_token))
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY))
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
@@ -48,6 +56,9 @@ async fn require_token(
     if req.uri().path() == "/health" || s.config.auth_token.is_empty() {
         return next.run(req).await;
     }
+    // Error shape follows the client edge: Codex (OpenAI dialect) cannot
+    // parse the Anthropic `{"type":"error"}` body, and vice-versa.
+    let on_responses_edge = req.uri().path().starts_with("/v1/responses");
     let headers = req.headers();
     let bearer = headers
         .get("authorization")
@@ -60,6 +71,12 @@ async fn require_token(
         .unwrap_or("");
     if bearer == s.config.auth_token || key == s.config.auth_token {
         next.run(req).await
+    } else if on_responses_edge {
+        openai_error(
+            StatusCode::UNAUTHORIZED,
+            "authentication_error",
+            "invalid gateway credential (check OCG_AUTH_TOKEN)",
+        )
     } else {
         anthropic_error(
             StatusCode::UNAUTHORIZED,
@@ -240,5 +257,95 @@ async fn messages(
             })
             .await
         }
+    }
+}
+
+/// The OpenAI Responses edge for Codex clients. Mirrors `messages()` minus
+/// the Claude Code specifics: no `mock_classifier` (that probe is Claude
+/// Code only), OpenAI error shapes everywhere, and dispatch gated to
+/// Responses-upstream models — Chat/Anthropic upstreams answer
+/// `501 not_implemented` until Fase 2 adds the canonical translation.
+async fn responses(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let raw = body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or("")
+        .to_string();
+    // The Codex config sends the id verbatim; the window-suffix strip is
+    // harmless here and lets a copied `[1m]` id resolve like in Claude Code.
+    let requested = if raw.is_empty() {
+        s.effective_default().await
+    } else {
+        strip_window_suffix(&raw).to_string()
+    };
+    if requested.is_empty() {
+        return openai_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "missing model (and no default_model configured)",
+        );
+    }
+    let stream = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let (entry, variant) = match s.resolve(&requested).await {
+        Ok(ok) => ok,
+        Err(msg) => {
+            return openai_error(StatusCode::NOT_FOUND, "not_found_error", &msg);
+        }
+    };
+
+    let store = CredentialStore::new(s.db_path.clone());
+    let Some(bearer) = upstream_bearer(&entry, &store) else {
+        return openai_error(
+            StatusCode::UNAUTHORIZED,
+            "authentication_error",
+            &format!(
+                "no stored credential for '{}' (run `opencode auth login`)",
+                entry.provider_id
+            ),
+        );
+    };
+
+    let Some(base) = entry.base_url().map(|x| x.to_string()) else {
+        return openai_error(
+            StatusCode::BAD_GATEWAY,
+            "server_error",
+            &format!("provider '{}' has no baseURL", entry.provider_id),
+        );
+    };
+
+    match protocol_for_entry(&entry) {
+        Protocol::Responses => {
+            forward_responses_passthrough(ForwardCtx {
+                s: &s,
+                headers: &headers,
+                body: &body,
+                entry: &entry,
+                base: &base,
+                bearer: &bearer,
+                gateway_model: &requested,
+                stream,
+                variant: variant.as_deref(),
+            })
+            .await
+        }
+        Protocol::ChatCompletions | Protocol::Anthropic => openai_error_code(
+            StatusCode::NOT_IMPLEMENTED,
+            "server_error",
+            &format!(
+                "model '{}' resolves to a {:?} upstream; the /v1/responses edge only \
+                 forwards Responses-upstream models (translation for Chat/Anthropic \
+                 upstreams is planned — see docs/config-codex.md)",
+                requested,
+                protocol_for_entry(&entry)
+            ),
+            Some("not_implemented"),
+        ),
     }
 }

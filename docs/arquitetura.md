@@ -1,13 +1,19 @@
 # Arquitetura
 
 [← README](../README.md) · [Configuração](configuracao.md) · [CLI](config-cli.md) ·
-[Desktop](config-desktop.md) · [Erros](erros.md) · [Dev](dev.md) ·
+[Desktop](config-desktop.md) · [Codex](config-codex.md) · [Erros](erros.md) · [Dev](dev.md) ·
 **Arquitetura**
 
 `opencode-claude-gateway` é um gateway local compatível com Anthropic que expõe os
 modelos do OpenCode v2 ao Claude Code. Escuta apenas em `127.0.0.1` e **nunca**
 fala com a Anthropic — o upstream é o backend Go/Console do OpenCode, roteado
 pelo pacote (provider).
+
+Há duas bordas de cliente: `POST /v1/messages` (dialecto Anthropic — Claude
+Code e Claude Desktop) e `POST /v1/responses` (dialecto OpenAI Responses —
+Codex; Fase 1 em passthrough byte-a-byte para upstreams Responses, com
+garra de evento terminal e erros em shape OpenAI, ligada por
+`responses_endpoint`, default on).
 
 ```mermaid
 flowchart LR

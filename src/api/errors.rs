@@ -16,18 +16,78 @@ pub(crate) fn anthropic_error(status: StatusCode, err_type: &str, msg: &str) -> 
     (status, Json(body)).into_response()
 }
 
-pub(crate) fn upstream_error_response(status: StatusCode, text: &str) -> Response {
-    let value = serde_json::from_str::<Value>(text).ok();
-    let message = value
-        .as_ref()
-        .and_then(|v| {
-            v.get("error")
+/// OpenAI-style error body for the `/v1/responses` edge (Codex): no
+/// top-level `type`, everything lives under `error`. `code` is optional —
+/// Codex reads it when present but only requires `message`/`type`.
+pub(crate) fn openai_error(status: StatusCode, err_type: &str, msg: &str) -> Response {
+    openai_error_code(status, err_type, msg, None)
+}
+
+/// Same as [`openai_error`] with an explicit machine-readable `code`
+/// (e.g. `not_implemented` on the Fase 1 protocol gate).
+pub(crate) fn openai_error_code(
+    status: StatusCode,
+    err_type: &str,
+    msg: &str,
+    code: Option<&str>,
+) -> Response {
+    let mut error = serde_json::json!({"message": msg, "type": err_type});
+    if let Some(c) = code {
+        error["code"] = Value::String(c.to_string());
+    }
+    (status, Json(serde_json::json!({ "error": error }))).into_response()
+}
+
+/// Extract the human message from an upstream error body, whatever shape it
+/// came in (`{"error":{"message"}}`, `{"message"}` or a raw preview).
+fn upstream_error_message(text: &str) -> String {
+    serde_json::from_str::<Value>(text)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("error")
                 .and_then(|e| e.get("message"))
-                .or_else(|| v.get("message"))
+                .or_else(|| value.get("message"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
         })
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .unwrap_or_else(|| body_preview(text));
+        .unwrap_or_else(|| body_preview(text))
+}
+
+/// Status → OpenAI `type` mapping for the `/v1/responses` edge (mirror of
+/// the Anthropic mapping in [`upstream_error_response`]).
+fn openai_error_type(status: StatusCode) -> &'static str {
+    match status {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => "authentication_error",
+        StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => "invalid_request_error",
+        StatusCode::NOT_FOUND => "not_found_error",
+        StatusCode::TOO_MANY_REQUESTS => "rate_limit_error",
+        _ => "server_error",
+    }
+}
+
+/// Normalize a non-2xx upstream body to the OpenAI error shape, keeping the
+/// upstream `error.code` when it carried one (mirrors
+/// [`upstream_error_response`] for the Codex edge).
+pub(crate) fn openai_error_response(status: StatusCode, text: &str) -> Response {
+    let message = upstream_error_message(text);
+    let upstream_code = serde_json::from_str::<Value>(text).ok().and_then(|value| {
+        value
+            .get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(|c| c.as_str())
+            .map(str::to_owned)
+    });
+    openai_error_code(
+        status,
+        openai_error_type(status),
+        &message,
+        upstream_code.as_deref(),
+    )
+}
+
+pub(crate) fn upstream_error_response(status: StatusCode, text: &str) -> Response {
+    let message = upstream_error_message(text);
     let error_type = match status {
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => "authentication_error",
         StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => "invalid_request_error",
@@ -234,5 +294,49 @@ mod tests {
         let long = "x".repeat(600);
         let p = body_preview(&long);
         assert!(p.len() < 600 && p.ends_with('…'), "{p}");
+    }
+
+    // -- /v1/responses (Codex) edge: OpenAI error shape --------------------
+
+    #[tokio::test]
+    async fn openai_error_shape_has_no_top_level_type() {
+        let resp = openai_error(StatusCode::NOT_FOUND, "not_found_error", "nope");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(v.get("type").is_none(), "{v}");
+        assert_eq!(v["error"]["type"], "not_found_error");
+        assert_eq!(v["error"]["message"], "nope");
+        assert!(v["error"].get("code").is_none());
+    }
+
+    #[tokio::test]
+    async fn openai_error_response_keeps_upstream_code() {
+        let resp = openai_error_response(
+            StatusCode::TOO_MANY_REQUESTS,
+            r#"{"error":{"message":"slow down","type":"rate_limit","code":"quota_exceeded"}}"#,
+        );
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v["error"]["type"], "rate_limit_error");
+        assert_eq!(v["error"]["message"], "slow down");
+        assert_eq!(v["error"]["code"], "quota_exceeded");
+    }
+
+    #[tokio::test]
+    async fn openai_error_response_falls_back_to_preview_and_server_error() {
+        let resp = openai_error_response(StatusCode::BAD_GATEWAY, "not json at all");
+        let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v["error"]["type"], "server_error");
+        assert_eq!(v["error"]["message"], "not json at all");
+        assert!(v["error"].get("code").is_none());
     }
 }

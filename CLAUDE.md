@@ -92,7 +92,8 @@ Layers:
   - `heartbeat.rs`: `with_heartbeat` — injects `event: ping` during upstream
     silence; `sse` / `sse_error` — Anthropic mid-stream frames, `sse_error`
     used when the upstream stream fails or reports `response.failed` after
-    opening.
+    opening; `responses_sse_error` — the `/v1/responses` edge's synthetic
+    `response.failed` terminal frame (Codex ignores bare `error` events).
 - **`api/server.rs`** — Axum handlers. `body` flows: resolve model → pick
   forward by `protocol_for_entry` (catalog `settings.endpoint` can override the
   package for mixed `github-copilot` rows) → translate → merge catalog defaults
@@ -104,6 +105,15 @@ Layers:
   (`upstream_error_response`), keeping the raw body only in the log — the
   `upstream rejected request` WARN also records `user_agent` and `session`
   (`x-claude-code-session-id`) so background callers can be attributed.
+  Second client edge: `POST /v1/responses` (Codex, OpenAI Responses dialect)
+  mirrors `messages()` minus `mock_classifier`, with OpenAI error shapes
+  everywhere (including `require_token`'s 401, path-specialized). It forwards
+  only `Protocol::Responses` entries via `forward_responses_passthrough`
+  (body/SSE byte-for-byte + catalog variant/defaults + terminal-event claw:
+  upstream truncation before `response.completed` emits a synthetic
+  `response.failed` before EOF); Chat/Anthropic upstreams get
+  `501 not_implemented` until Fase 2. Gated by `config.responses_endpoint`
+  (default true).
 
 ## Conventions & gotchas
 
@@ -141,7 +151,19 @@ Layers:
   `anthropic-version` and session headers.
 - **Error shape**: always `{"type":"error","error":{"type":...,"message":...}}`
   with Anthropic error types (`not_found_error`, `authentication_error`,
-  `invalid_request_error`, `api_error`).
+  `invalid_request_error`, `api_error`). Exception: everything on the
+  `/v1/responses` Codex edge uses the OpenAI shape
+  `{"error":{"message":...,"type":...,"code":...}}` — Codex cannot parse the
+  Anthropic one (and its stream parser needs `response.completed`/`failed`
+  before EOF, hence the terminal-event claw).
+- **Codex edge** (`POST /v1/responses`, `responses_endpoint`, default `true`):
+  Fase 1 = passthrough for Responses-upstream models only (opencode-go/zen
+  `/responses` rows + Copilot `endpoint: "responses"`); Chat/Anthropic
+  upstreams answer `501 not_implemented` (Fase 2 translates). Codex's
+  `session-id`/`thread-id` headers feed `x-opencode-session` only after the
+  Claude headers are checked, so the Claude path is byte-identical. Codex
+  tests live in the self-contained `tests/codex.rs`; `tests/gateway.rs`
+  stays Claude-only on purpose (compatibility canary).
 - **Catalog is read once** in a background task after bind (no periodic refresh;
   remove/restart to pick up new models, `--refresh` previews what boot would
   load). `/health` stays `starting` until that first load, `degraded` after a
@@ -151,6 +173,7 @@ Layers:
   the project presentation + binary install + links; `docs/configuracao.md`
   (gateway `config.toml`, auth, aliases, variants), `docs/config-cli.md` (Claude
   Code CLI setup), `docs/config-desktop.md` (Claude Desktop + `[tiers]`),
+  `docs/config-codex.md` (Codex via the `/v1/responses` edge),
   `docs/erros.md` (health/logs/troubleshooting), `docs/dev.md` (dev, CI,
   releases) and `docs/arquitetura.md` (layers, MVP limits). Keep them in sync
   when behavior changes, and preserve the top-of-file nav line and the

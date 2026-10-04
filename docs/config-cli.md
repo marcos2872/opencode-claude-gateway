@@ -1,7 +1,7 @@
 # Configuração no Claude Code CLI
 
 [← README](../README.md) · [Configuração](configuracao.md) · **CLI** ·
-[Desktop](config-desktop.md) · [Erros](erros.md) · [Dev](dev.md) ·
+[Desktop](config-desktop.md) · [Codex](config-codex.md) · [Erros](erros.md) · [Dev](dev.md) ·
 [Arquitetura](arquitetura.md)
 
 Como apontar o **Claude Code** (CLI) para o gateway: variáveis de ambiente,
@@ -213,4 +213,5 @@ curl -s -X POST "$ANTHROPIC_BASE_URL/v1/messages" \
 
 - [Configuração do gateway](configuracao.md) — `config.toml`, aliases, variantes.
 - [Configuração no Claude Desktop](config-desktop.md) — o app Desktop.
+- [Configuração no Codex](config-codex.md) — a borda Responses do mesmo gateway.
 - [Erros e diagnóstico](erros.md) — sintomas comuns (401, 429, `models:0`, etc.).
