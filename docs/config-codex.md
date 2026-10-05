@@ -72,16 +72,38 @@ aceita (default localhost-only).
 
 ## Lado do Codex
 
-`~/.codex/config.toml` — atenção: **`model` e `model_provider` são chaves de
-topo e precisam vir antes da primeira `[tabela]`** (TOML: tudo depois de um
-header de tabela pertence àquela tabela; colados no fim do arquivo, eles
-viram chaves de `shell_environment_policy` e são silenciosamente ignorados):
+### Passo a passo
+
+1. **Suba o gateway**: `ocg --start` e confirme com
+   `curl -s 127.0.0.1:3737/health` (espera `"status":"ok"`).
+2. **Escolha um modelo**: pegue o slug do catálogo Codex-native
+   (`GET /v1/models/codex`, ou `codex debug models` depois do passo 4) — ele
+   vem **sem** o sufixo `[1m]` (ex.:
+   `claude-opencode-go-d-eepseek-v4-1-flash`). É esse slug limpo que vai no
+   `model`.
+3. **Edite `~/.codex/config.toml`**: `model` e `model_provider` são chaves de
+   **topo** — precisam vir **antes da primeira `[tabela]`**.
+4. **Declare o provider** `[model_providers.ocg]` com `base_url`, `wire_api` e
+   `model_catalog_url` (bloco abaixo).
+5. **Reinicie o Codex** (ele relê o `config.toml` no boot) e confirme que o
+   picker lista os modelos: `codex debug models`.
+
+O resultado final de `~/.codex/config.toml` (chaves de topo no lugar certo,
+provider no fim) — atenção: **`model` e `model_provider` precisam vir antes
+da primeira `[tabela]`** (TOML: tudo depois de um header de tabela pertence
+àquela tabela; colados no fim do arquivo, eles viram chaves de
+`shell_environment_policy` e são silenciosamente ignorados):
 
 ```toml
-model = "claude-opencode-go-g-rok-4-7"   # id anunciado em GET /v1/models
+# ~/.codex/config.toml
+# ── 1) ESTAS DUAS LINHAS VÃO NO TOPO, ANTES DE QUALQUER [tabela] ──
+model = "claude-opencode-go-d-eepseek-v4-1-flash"   # slug do picker, sem [1m]
 model_provider = "ocg"
-# model_reasoning_effort = "medium"      # já pode estar no topo do seu config
 
+# ── 2) Suas outras tabelas ficam no meio, na ordem que já estão ──
+#    [desktop], [mcp_servers.*], [plugins.*], ...
+
+# ── 3) ESTE BLOCO É UMA TABELA PRÓPRIA; pode ficar em qualquer lugar depois ──
 [model_providers.ocg]
 name = "opencode-claude-gateway"
 base_url = "http://127.0.0.1:3737/v1"
@@ -90,12 +112,28 @@ model_catalog_url = "http://127.0.0.1:3737/v1/models/codex"
 # env_key = "OCG_AUTH_TOKEN"            # só quando auth_token estiver setado
 ```
 
+Resumindo o "onde": as duas chaves de topo (`model`, `model_provider`) têm que
+ser as **primeiras linhas do arquivo**; o bloco `[model_providers.ocg]` fica
+depois das suas tabelas existentes, no fim do arquivo (ele já é uma tabela,
+então pertence a si mesmo).
+
 `base_url` já inclui `/v1`: o Codex concatena `/responses` e bate em
 `POST /v1/responses`. `wire_api = "responses"` é obrigatório (é o único
-dialecto que ele fala para providers custom). Suba o gateway antes
-(`ocg --start`) — e lembre do caveat de sempre: **o Codex Desktop não herda o
-env do shell**, então `OCG_AUTH_TOKEN` precisa estar na sessão do app ou o
-gateway rodar sem `auth_token` em localhost.
+dialecto que ele fala para providers custom). Caveat de auth: **o Codex
+Desktop não herda o env do shell**, então com `auth_token` setado no gateway
+o `OCG_AUTH_TOKEN` precisa estar na sessão do app (ou o gateway rodar sem
+`auth_token` em localhost).
+
+Sem `model_provider = "ocg"` no topo, o Codex **ignora o bloco
+`[model_providers.ocg]` inteiro**: `base_url`, `wire_api` e
+`model_catalog_url` não são usados, o picker mostra só os modelos built-in
+(`gpt-6-luna`, `gpt-5.6-luna`, …) e `~/.codex/models_cache.json` nunca recebe
+as aliases do gateway. Checklist rápido:
+
+1. `model` e `model_provider` existem **antes da primeira `[tabela]`**?
+2. `model` bate **exatamente** com um slug do catálogo (veja o picker ou
+   `codex debug models`)?
+3. O gateway responde em `127.0.0.1:3737` (`curl -s 127.0.0.1:3737/health`)?
 
 ## Modelos no picker (`model_catalog_url`)
 
@@ -114,10 +152,18 @@ upstream Responses no passthrough, os demais pela tradução da Fase 2.
   recusa o arquivo inteiro acima disso (com o texto completo, 65 modelos
   estouravam o cap e o picker ficava vazio). O teste
   `codex_catalog_stays_under_the_client_download_cap` segura esse orçamento.
-- `context_window` vai como campo estruturado (sem sufixo `[1m]` no slug).
+- `context_window` vai como campo estruturado, e **o slug não leva o sufixo
+  de janela**: a borda Anthropic anuncia alguns ids com `[1m]`
+  (`claude-opencode-go-d-eepseek-v4-1-flash[1m]`, que o Claude Code usa), mas
+  o catálogo Codex os serve limpos. Configure `model` com o slug **sem**
+  `[1m]` — o sufixo só existe para o Claude Code, e um `model` com `[1m]` não
+  casa com nenhum slug do picker.
 - Depois de mudar o config, reinicie o Codex (o catálogo é cacheado em
   `~/.codex/models_cache.json` com TTL de 5 min). Diagnóstico:
-  `codex debug models` deve listar os modelos do gateway.
+  `codex debug models` deve listar os modelos do gateway — e o cache
+  (`count` + `identity`) confirma se a fetch pegou o catálogo certo: um
+  `count` de ~6 slugs built-in (`gpt-6-luna`, `gpt-5.6-luna`, …) significa que
+  o Codex caiu no catálogo nativo e o `model_provider` não está ativo.
 
 ## Erros comuns
 
@@ -125,6 +171,8 @@ upstream Responses no passthrough, os demais pela tradução da Fase 2.
 |---|---|
 | `401 authentication_error` (shape OpenAI) | token errado/ausente — `env_key` ou `auth_token` do gateway. |
 | `404 not_found_error` | id do modelo fora do catálogo — copie o id de `GET /v1/models` (ou veja o picker com `model_catalog_url`). |
+| picker só mostra os built-in (`gpt-6-luna`, …) | `model_provider = "ocg"` ausente ou não-topo — sem ele o Codex ignora `[model_providers.ocg]` e usa o catálogo nativo. |
+| `model` não casa no picker | slug com sufixo `[1m]` — o catálogo Codex serve os ids **sem** o sufixo. |
 | `response.failed` no meio do stream | upstream caiu/truncou; a garra do gateway reporta `response.error.message`. |
 | `403` de upstream `opencode/*` | free-tier fora do OpenCode (escondido no `/v1/models` a menos que `include_free_tier = true`). |
 
