@@ -1,7 +1,7 @@
 # Erros e diagnóstico
 
 [← README](../README.md) · [Configuração](configuracao.md) · [CLI](config-cli.md) ·
-[Desktop](config-desktop.md) · **Erros** · [Dev](dev.md) ·
+[Desktop](config-desktop.md) · [Codex](config-codex.md) · **Erros** · [Dev](dev.md) ·
 [Arquitetura](arquitetura.md)
 
 Como checar a saúde do gateway, onde ficam os logs, a tabela de sintomas mais
@@ -82,4 +82,5 @@ requisições minúsculas cobradas como uso normal do Go.
 - [Configuração do gateway](configuracao.md) — ajustar `config.toml`.
 - [Configuração no Claude Code CLI](config-cli.md) — env e `settings.json`.
 - [Configuração no Claude Desktop](config-desktop.md) — setup do app Desktop.
+- [Configuração no Codex](config-codex.md) — erros em shape OpenAI na edge Responses.
 - [Desenvolvimento](dev.md) — rodar em dev e reproduzir o CI.

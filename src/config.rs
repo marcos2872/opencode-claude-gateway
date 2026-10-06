@@ -49,6 +49,11 @@ pub const CONFIG_TEMPLATE: &str = r#"# opencode-claude-gateway — config.toml (
 # liveness probes) locally instead of forwarding upstream. Off by default.
 # mock_classifier = false
 
+# Serve POST /v1/responses (OpenAI Responses API edge, for Codex clients)
+# next to /v1/messages. On by default; set false to expose only the
+# Anthropic edge (Claude Code / Claude Desktop).
+# responses_endpoint = true
+
 # Upstream transport timeouts, in seconds. connect fails fast on an
 # unreachable provider; request bounds the whole call, streaming included.
 # connect_timeout_secs = 30
@@ -192,6 +197,12 @@ pub struct AppConfig {
     /// still forwarded normally.
     #[serde(default)]
     pub mock_classifier: bool,
+    /// Serve `POST /v1/responses` (OpenAI Responses API edge for Codex
+    /// clients) alongside `/v1/messages`. On by default; set false to
+    /// expose only the Anthropic edge. The Codex edge only forwards
+    /// Responses-upstream models (Fase 1 passthrough — see docs/config-codex.md).
+    #[serde(default = "default_true")]
+    pub responses_endpoint: bool,
     /// TCP/TLS connect timeout for the upstream request, in seconds.
     /// Short so an unreachable provider fails fast.
     #[serde(default = "default_connect_timeout_secs")]
@@ -237,6 +248,7 @@ impl Default for AppConfig {
             desktop_aliases: false,
             cli_shield_aliases: true,
             mock_classifier: false,
+            responses_endpoint: true,
             connect_timeout_secs: default_connect_timeout_secs(),
             request_timeout_secs: default_request_timeout_secs(),
         }

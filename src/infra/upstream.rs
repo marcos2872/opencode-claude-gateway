@@ -15,9 +15,12 @@ pub mod variant;
 
 pub use chat::{anthropic_to_openai, openai_to_anthropic};
 pub use estimate::estimate_tokens;
-pub use heartbeat::{sse, sse_error, with_heartbeat};
-pub use responses::{anthropic_to_responses, responses_to_anthropic};
-pub use stream::{ResponsesTranslator, StreamTranslator};
+pub use heartbeat::{responses_sse_error, sse, sse_error, with_heartbeat};
+pub use responses::{
+    anthropic_to_responses, anthropic_to_responses_response, codex_custom_tool_names,
+    responses_to_anthropic, responses_to_anthropic_request,
+};
+pub use stream::{ResponsesOutTranslator, ResponsesTranslator, StreamTranslator};
 pub use variant::{
     apply_variant, apply_variant_checked, normalize_reasoning, variant_plan, AnthropicVariantError,
     VariantPlan,

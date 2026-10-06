@@ -3,6 +3,7 @@
 
 use axum::{
     extract::State,
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
@@ -314,6 +315,9 @@ struct MockUpstream {
     betas: Arc<Mutex<Vec<Option<String>>>>,
     org_ids: Arc<Mutex<Vec<Option<String>>>>,
     chat_streaming: bool,
+    /// Answer /messages/count_tokens with 500 so the gateway falls back to
+    /// the local estimate.
+    count_tokens_fail: bool,
     /// Emit a streaming Chat response that ends after a partial frame,
     /// mid-SSE. Exercises the stream-failure path.
     chat_stream_truncated: bool,
@@ -424,6 +428,13 @@ async fn mock_count_tokens(
     Json(body): Json<Value>,
 ) -> Response {
     note(&st, &headers, "messages/count_tokens", body).await;
+    if st.count_tokens_fail {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "boom"})),
+        )
+            .into_response();
+    }
     Json(json!({"input_tokens": 7})).into_response()
 }
 
@@ -1499,4 +1510,184 @@ async fn e2e_mock_real_conversation_still_forwards() {
     let body: Value = resp.json();
     assert_eq!(body["content"][0]["text"], "mock anthropic reply");
     assert_eq!(calls_to(&mock, "messages").await.len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Cobertura: normalização de erro upstream, resolução de fast rows e
+// count_tokens (modelo ausente/desconhecido, fallback após proxy 500).
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn upstream_error_status_maps_to_anthropic_type() {
+    // Cada status vira o `type` Anthropic correspondente, com o mesmo HTTP.
+    for (status, expected) in [
+        (400u16, "invalid_request_error"),
+        (401, "authentication_error"),
+        (403, "authentication_error"),
+        (404, "not_found_error"),
+        (429, "rate_limit_error"),
+        (500, "api_error"),
+        (502, "api_error"),
+    ] {
+        let app = Router::new().route(
+            "/chat/completions",
+            post(move || async move {
+                (
+                    StatusCode::from_u16(status).unwrap(),
+                    Json(json!({"oops": true})),
+                )
+                    .into_response()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let state = seeded_state(
+            test_config(),
+            vec![mock_entry(&base, CHAT_PKG, "mock-chat")],
+            vec![alias("claude-x", "opencode/mock-chat")],
+        )
+        .await;
+        let server = axum_test::TestServer::new(router(state)).unwrap();
+        let resp = server
+            .post("/v1/messages")
+            .add_header("x-api-key", "test-secret")
+            .json(&msg_body("claude-x"))
+            .await;
+        assert_eq!(resp.status_code(), status, "http {status}");
+        let body: Value = resp.json();
+        assert_eq!(body["type"], "error");
+        assert_eq!(body["error"]["type"], expected, "status {status}");
+    }
+}
+
+#[tokio::test]
+async fn resolve_manual_alias_and_refs_to_id_distinct_rows() {
+    // Uma linha `id`-distinta (fast flavor): `model_id` é o base, `id` o row.
+    let mock = MockUpstream::default();
+    let base = spawn_mock(mock.clone()).await;
+    let mut e = mock_entry(&base, CHAT_PKG, "m");
+    e.id = "m-fast".to_string();
+    let state = seeded_state(
+        test_config(),
+        vec![e],
+        vec![alias("claude-p-m-fast", "opencode/m-fast")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    // Alias manual apontando para o ref `provider/id` da fast row.
+    let resp = server
+        .post("/v1/messages")
+        .add_header("x-api-key", "test-secret")
+        .json(&msg_body("claude-p-m-fast"))
+        .await;
+    assert_eq!(resp.status_code(), 200);
+    // Ref direta `provider/id` resolve a mesma row.
+    let resp = server
+        .post("/v1/messages")
+        .add_header("x-api-key", "test-secret")
+        .json(&msg_body("opencode/m-fast"))
+        .await;
+    assert_eq!(resp.status_code(), 200);
+    // Ref direta `provider/model` resolve pelo `model_id`.
+    let resp = server
+        .post("/v1/messages")
+        .add_header("x-api-key", "test-secret")
+        .json(&msg_body("opencode/m"))
+        .await;
+    assert_eq!(resp.status_code(), 200);
+}
+
+#[tokio::test]
+async fn variant_on_model_without_variants_is_404() {
+    let mock = MockUpstream::default();
+    let base = spawn_mock(mock.clone()).await;
+    let state = seeded_state(
+        test_config(),
+        vec![mock_entry(&base, CHAT_PKG, "mock-chat")],
+        vec![alias("claude-x", "opencode/mock-chat")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let resp = server
+        .post("/v1/messages")
+        .add_header("x-api-key", "test-secret")
+        .json(&msg_body("claude-x#low"))
+        .await;
+    assert_eq!(resp.status_code(), 404);
+    let body: Value = resp.json();
+    assert_eq!(body["error"]["type"], "not_found_error");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("has no variants"),
+        "{body}",
+    );
+}
+
+#[tokio::test]
+async fn count_tokens_unknown_model_is_404() {
+    let base = spawn_mock(MockUpstream::default()).await;
+    let state = seeded_state(
+        test_config(),
+        vec![mock_entry(&base, CHAT_PKG, "mock-chat")],
+        vec![alias("claude-x", "opencode/mock-chat")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let resp = server
+        .post("/v1/messages/count_tokens")
+        .add_header("x-api-key", "test-secret")
+        .json(&msg_body("nope"))
+        .await;
+    assert_eq!(resp.status_code(), 404);
+    let body: Value = resp.json();
+    assert_eq!(body["error"]["type"], "not_found_error");
+}
+
+#[tokio::test]
+async fn count_tokens_empty_model_without_default_is_400() {
+    // Sem aliases, `effective_default()` é "" e a contagem vira 400.
+    let base = spawn_mock(MockUpstream::default()).await;
+    let state = seeded_state(test_config(), vec![], vec![]).await;
+    let _ = base;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let resp = server
+        .post("/v1/messages/count_tokens")
+        .add_header("x-api-key", "test-secret")
+        .json(&json!({"messages": [{"role": "user", "content": "hi"}]}))
+        .await;
+    assert_eq!(resp.status_code(), 400);
+    let body: Value = resp.json();
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+}
+
+#[tokio::test]
+async fn count_tokens_proxy_500_falls_back_to_estimate() {
+    let mock = MockUpstream {
+        count_tokens_fail: true,
+        ..Default::default()
+    };
+    let base = spawn_mock(mock.clone()).await;
+    let state = seeded_state(
+        test_config(),
+        vec![mock_entry(&base, ANTHROPIC_PKG, "mock-anth")],
+        vec![alias("claude-mock-anth", "opencode/mock-anth")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let resp = server
+        .post("/v1/messages/count_tokens")
+        .add_header("x-api-key", "test-secret")
+        .json(&msg_body("claude-mock-anth"))
+        .await;
+    assert_eq!(resp.status_code(), 200);
+    let body: Value = resp.json();
+    // O proxy foi tentado (500) e o gateway estimou localmente: "hi" dá
+    // 3 de overhead + 1 de texto, não os 7 do mock.
+    assert_eq!(calls_to(&mock, "messages/count_tokens").await.len(), 1);
+    assert_eq!(body["input_tokens"], 4);
 }

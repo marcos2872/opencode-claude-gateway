@@ -1,7 +1,7 @@
 # Configuração no Claude Desktop
 
 [← README](../README.md) · [Configuração](configuracao.md) · [CLI](config-cli.md) ·
-**Desktop** · [Erros](erros.md) · [Dev](dev.md) · [Arquitetura](arquitetura.md)
+**Desktop** · [Codex](config-codex.md) · [Erros](erros.md) · [Dev](dev.md) · [Arquitetura](arquitetura.md)
 
 Como apontar o app **Claude Desktop** para o gateway. As opções do lado do
 gateway (auth, aliases, variantes) estão em [Configuração](configuracao.md).
@@ -210,4 +210,5 @@ curl -s -X POST http://127.0.0.1:3737/v1/messages \
 
 - [Configuração do gateway](configuracao.md) — `config.toml`, auth, aliases.
 - [Configuração no Claude Code CLI](config-cli.md) — o CLI, que tem armadilhas próprias.
+- [Configuração no Codex](config-codex.md) — clients que falam Responses API.
 - [Erros e diagnóstico](erros.md) — 429 de título, permissões do managed file.

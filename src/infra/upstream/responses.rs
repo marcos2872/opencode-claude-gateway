@@ -4,6 +4,7 @@ use super::shared::{
     block_text, floor_output_tokens, image_part_to_responses, parse_args, tool_result_parts,
 };
 use serde_json::Value;
+use std::collections::HashSet;
 
 // ---------------------------------------------------------------------------
 // Anthropic -> OpenAI Responses API (`/responses`: Go GPT/Grok/Muse rows)
@@ -311,6 +312,381 @@ pub fn responses_to_anthropic(resp: &Value, gateway_model: &str) -> Value {
         }
     })
 }
+
+// ---------------------------------------------------------------------------
+// Responses request / Anthropic response — Fase 2 (Codex edge on
+// Chat/Anthropic upstreams). The canonical bridge is always Anthropic: the
+// request lands as a `/messages` body (or goes through `anthropic_to_openai`
+// for Chat rows) and every stream is reshaped back from Anthropic events.
+// ---------------------------------------------------------------------------
+
+/// Tool names the client declared with `type: "custom"` (Codex's apply_patch).
+/// The request carries them as single-field `input` functions; the response
+/// side needs the set back to rebuild `custom_tool_call` items.
+pub fn codex_custom_tool_names(body: &Value) -> HashSet<String> {
+    body.get("tools")
+        .and_then(Value::as_array)
+        .map(|tools| {
+            tools
+                .iter()
+                .filter(|t| t.get("type").and_then(Value::as_str) == Some("custom"))
+                .filter_map(|t| t.get("name").and_then(Value::as_str).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Append one content block, coalescing consecutive same-role messages —
+/// Anthropic messages must alternate, while Responses `input` is a flat item
+/// list (`function_call_output` + follow-up `message` are both "user").
+fn push_block(msgs: &mut Vec<Value>, role: &str, block: Value) {
+    if let Some(last) = msgs.last_mut() {
+        if last.get("role").and_then(Value::as_str) == Some(role) {
+            if let Some(arr) = last.get_mut("content").and_then(|c| c.as_array_mut()) {
+                arr.push(block);
+                return;
+            }
+        }
+    }
+    msgs.push(serde_json::json!({"role": role, "content": [block]}));
+}
+
+/// Reverse of `image_part_to_responses`: a Responses `input_image` data URL
+/// (or plain URL) back into an Anthropic image block.
+fn input_image_to_anthropic(p: &Value) -> Option<Value> {
+    let raw = match p.get("image_url") {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Object(o)) => o.get("url").and_then(Value::as_str)?.to_string(),
+        _ => return None,
+    };
+    if let Some(rest) = raw.strip_prefix("data:") {
+        let (meta, data) = rest.split_once(',')?;
+        let media_type = meta.split(';').next().unwrap_or("image/png");
+        if data.is_empty() {
+            return None;
+        }
+        Some(serde_json::json!({
+            "type": "image",
+            "source": {"type": "base64", "media_type": media_type, "data": data}
+        }))
+    } else if raw.starts_with("http://") || raw.starts_with("https://") {
+        Some(serde_json::json!({
+            "type": "image",
+            "source": {"type": "url", "url": raw}
+        }))
+    } else {
+        None
+    }
+}
+
+/// Convert an OpenAI Responses request (the Codex edge) into a canonical
+/// Anthropic Messages body for Chat/Anthropic upstreams (Fase 2).
+///
+/// Carried over: `instructions` → `system`, messages (with `developer` folded
+/// into the system prompt), `function_call`/`function_call_output`,
+/// `custom_tool_call`/`custom_tool_call_output` (custom tools become
+/// single-field `input` functions), images, tools, `tool_choice`,
+/// `max_output_tokens` → `max_tokens` (floored) and `stream`.
+///
+/// Deliberately dropped (documented in `docs/config-codex.md`):
+/// `reasoning`/`include` (Anthropic has no round-trippable equivalent — the
+/// catalog variant still applies), `store`/`prompt_cache_key`/`client_metadata`,
+/// `parallel_tool_calls`, and non function/custom tools (`web_search`,
+/// `namespace`, ...). `reasoning` and other item types in `input` are dropped:
+/// upstreams never see them.
+pub fn responses_to_anthropic_request(body: &Value, upstream_model: &str) -> Value {
+    let mut system_parts: Vec<String> = vec![];
+    if let Some(s) = body.get("instructions").and_then(Value::as_str) {
+        if !s.trim().is_empty() {
+            system_parts.push(s.to_string());
+        }
+    }
+    let mut msgs: Vec<Value> = vec![];
+    if let Some(items) = body.get("input").and_then(Value::as_array) {
+        for item in items {
+            match item.get("type").and_then(Value::as_str) {
+                Some("message") => {
+                    let role = item.get("role").and_then(Value::as_str).unwrap_or("user");
+                    let texts: Vec<String> = item
+                        .get("content")
+                        .and_then(Value::as_array)
+                        .map(|parts| {
+                            parts
+                                .iter()
+                                .filter_map(|p| match p.get("type").and_then(Value::as_str) {
+                                    Some("input_text") | Some("output_text") | Some("text") => {
+                                        p.get("text").and_then(Value::as_str).map(str::to_string)
+                                    }
+                                    _ => None,
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if role == "developer" || role == "system" {
+                        let joined = texts.join("\n");
+                        if !joined.trim().is_empty() {
+                            system_parts.push(joined);
+                        }
+                        continue;
+                    }
+                    let role = if role == "assistant" {
+                        "assistant"
+                    } else {
+                        "user"
+                    };
+                    let mut blocks: Vec<Value> = vec![];
+                    for p in item
+                        .get("content")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                    {
+                        match p.get("type").and_then(Value::as_str) {
+                            Some("input_text") | Some("output_text") | Some("text") => {
+                                if let Some(t) = p.get("text").and_then(Value::as_str) {
+                                    blocks.push(serde_json::json!({"type": "text", "text": t}));
+                                }
+                            }
+                            Some("input_image") => {
+                                if let Some(img) = input_image_to_anthropic(p) {
+                                    blocks.push(img);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    for b in blocks {
+                        push_block(&mut msgs, role, b);
+                    }
+                }
+                Some("function_call") => {
+                    let name = item.get("name").and_then(Value::as_str).unwrap_or("");
+                    if name.is_empty() {
+                        continue;
+                    }
+                    push_block(
+                        &mut msgs,
+                        "assistant",
+                        serde_json::json!({
+                            "type": "tool_use",
+                            "id": item.get("call_id").cloned().unwrap_or(Value::String("call_0".into())),
+                            "name": name,
+                            "input": parse_args(item.get("arguments").and_then(Value::as_str).unwrap_or("{}"))
+                        }),
+                    );
+                }
+                Some("custom_tool_call") => {
+                    let name = item.get("name").and_then(Value::as_str).unwrap_or("");
+                    if name.is_empty() {
+                        continue;
+                    }
+                    push_block(
+                        &mut msgs,
+                        "assistant",
+                        serde_json::json!({
+                            "type": "tool_use",
+                            "id": item.get("call_id").cloned().unwrap_or(Value::String("call_0".into())),
+                            "name": name,
+                            "input": {"input": item.get("input").and_then(Value::as_str).unwrap_or("")}
+                        }),
+                    );
+                }
+                Some("function_call_output") | Some("custom_tool_call_output") => {
+                    push_block(
+                        &mut msgs,
+                        "user",
+                        serde_json::json!({
+                            "type": "tool_result",
+                            "tool_use_id": item.get("call_id").cloned().unwrap_or(Value::String("call_0".into())),
+                            "content": item.get("output").and_then(Value::as_str).unwrap_or("")
+                        }),
+                    );
+                }
+                // `reasoning`, `local_shell_call`, `web_search_call`, ...:
+                // no Anthropic equivalent — dropped (documented).
+                _ => {}
+            }
+        }
+    }
+
+    let mut out = serde_json::json!({
+        "model": upstream_model,
+        "messages": msgs,
+    });
+    let system = system_parts.join("\n\n");
+    if !system.is_empty() {
+        out["system"] = Value::String(system);
+    }
+    if let Some(tools) = body.get("tools").and_then(Value::as_array) {
+        let mut mapped: Vec<Value> = vec![];
+        for t in tools {
+            let name = t.get("name").and_then(Value::as_str).unwrap_or("");
+            if name.is_empty() {
+                continue;
+            }
+            let schema = match t.get("type").and_then(Value::as_str) {
+                Some("function") => t
+                    .get("parameters")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({"type": "object"})),
+                // Custom tools (apply_patch) ride as a single `input` string;
+                // `custom_tool_call` items wrap the freeform text to match.
+                Some("custom") => serde_json::json!({
+                    "type": "object",
+                    "properties": {"input": {"type": "string"}},
+                    "required": ["input"]
+                }),
+                // web_search / namespace / ...: no Anthropic equivalent.
+                _ => continue,
+            };
+            mapped.push(serde_json::json!({
+                "name": name,
+                "description": t.get("description").cloned().unwrap_or(Value::String("".into())),
+                "input_schema": schema
+            }));
+        }
+        if !mapped.is_empty() {
+            out["tools"] = Value::Array(mapped);
+        }
+        if let Some(tc) = body.get("tool_choice") {
+            out["tool_choice"] = match tc {
+                Value::String(s) => match s.as_str() {
+                    "required" => serde_json::json!({"type": "any"}),
+                    "none" => serde_json::json!({"type": "none"}),
+                    _ => serde_json::json!({"type": "auto"}),
+                },
+                Value::Object(_) => {
+                    let name = tc.get("name").and_then(Value::as_str);
+                    match (tc.get("type").and_then(Value::as_str), name) {
+                        (Some("function"), Some(n)) => {
+                            serde_json::json!({"type": "tool", "name": n})
+                        }
+                        (Some("none"), _) => serde_json::json!({"type": "none"}),
+                        (Some("required"), _) => serde_json::json!({"type": "any"}),
+                        _ => serde_json::json!({"type": "auto"}),
+                    }
+                }
+                _ => serde_json::json!({"type": "auto"}),
+            };
+        }
+    }
+    if let Some(m) = body.get("max_output_tokens") {
+        out["max_tokens"] = floor_output_tokens(m);
+    }
+    for key in ["temperature", "top_p"] {
+        if let Some(v) = body.get(key) {
+            out[key] = v.clone();
+        }
+    }
+    if body.get("stream").and_then(Value::as_bool).unwrap_or(false) {
+        out["stream"] = Value::Bool(true);
+    }
+    out
+}
+
+/// Convert an Anthropic Messages response into an OpenAI Responses response
+/// (non-streaming side of the Codex edge). `custom_tools` rebuilds
+/// `custom_tool_call` items for the tools the client declared as custom.
+pub fn anthropic_to_responses_response(
+    resp: &Value,
+    gateway_model: &str,
+    custom_tools: &HashSet<String>,
+) -> Value {
+    let resp_id = format!(
+        "resp_{}",
+        &uuid::Uuid::new_v4().to_string().replace('-', "")[..24]
+    );
+    let mut output: Vec<Value> = vec![];
+    let mut texts: Vec<String> = vec![];
+    let content = resp.get("content").and_then(Value::as_array);
+    if let Some(blocks) = content {
+        for b in blocks {
+            match b.get("type").and_then(Value::as_str) {
+                Some("text") => {
+                    if let Some(t) = b.get("text").and_then(Value::as_str) {
+                        texts.push(t.to_string());
+                    }
+                }
+                Some("tool_use") => {
+                    let name = b.get("name").and_then(Value::as_str).unwrap_or("");
+                    let id = b
+                        .get("id")
+                        .cloned()
+                        .unwrap_or(Value::String("call_0".into()));
+                    if custom_tools.contains(name) {
+                        let input = b.get("input").and_then(|i| i.get("input"));
+                        let raw = match input {
+                            Some(Value::String(s)) => s.clone(),
+                            Some(other) => other.to_string(),
+                            None => String::new(),
+                        };
+                        output.push(serde_json::json!({
+                            "type": "custom_tool_call",
+                            "call_id": id,
+                            "name": name,
+                            "input": raw
+                        }));
+                    } else {
+                        output.push(serde_json::json!({
+                            "type": "function_call",
+                            "call_id": id,
+                            "name": name,
+                            "arguments": serde_json::to_string(
+                                b.get("input").unwrap_or(&Value::Object(Default::default()))
+                            ).unwrap_or_else(|_| "{}".into())
+                        }));
+                    }
+                }
+                // thinking / redacted_thinking: not round-trippable.
+                _ => {}
+            }
+        }
+    }
+    let text = texts.join("\n");
+    if !text.is_empty() || output.is_empty() {
+        output.insert(
+            0,
+            serde_json::json!({
+                "type": "message",
+                "id": format!("msg_out_{}", &uuid::Uuid::new_v4().to_string().replace('-', "")[..16]),
+                "status": "completed",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": text}]
+            }),
+        );
+    }
+    let stop_reason = resp
+        .get("stop_reason")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let incomplete = stop_reason == "max_tokens";
+    let usage = resp.get("usage");
+    let input_tokens = usage
+        .and_then(|u| u.get("input_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output_tokens = usage
+        .and_then(|u| u.get("output_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let mut out = serde_json::json!({
+        "id": resp_id,
+        "object": "response",
+        "model": gateway_model,
+        "status": if incomplete { "incomplete" } else { "completed" },
+        "output": output,
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens
+        }
+    });
+    if incomplete {
+        out["incomplete_details"] = serde_json::json!({"reason": "max_output_tokens"});
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,5 +881,115 @@ mod tests {
             vec!["role:user", "role:assistant", "role:user"],
             "no pending calls means no reordering: {r}"
         );
+    }
+
+    // -- Fase 2: Codex edge -> canonical Anthropic (and back) ---------------
+
+    fn codex_request() -> Value {
+        serde_json::json!({
+            "model": "claude-x",
+            "instructions": "you are codex",
+            "input": [
+                {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "dev note"}]},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "let me check"}]},
+                {"type": "function_call", "call_id": "call_1", "name": "shell", "arguments": "{\"cmd\":\"ls\"}"},
+                {"type": "function_call_output", "call_id": "call_1", "output": "file.txt"},
+                {"type": "custom_tool_call", "call_id": "call_2", "name": "apply_patch", "input": "*** Begin Patch"},
+                {"type": "custom_tool_call_output", "call_id": "call_2", "output": "Done"},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "thanks"}]},
+                {"type": "reasoning", "summary": []}
+            ],
+            "tools": [
+                {"type": "function", "name": "shell", "description": "d", "parameters": {"type": "object"}},
+                {"type": "custom", "name": "apply_patch", "description": "p"},
+                {"type": "web_search"},
+                {"type": "namespace", "name": "mcp__x", "tools": []}
+            ],
+            "tool_choice": "auto",
+            "max_output_tokens": 8,
+            "stream": true
+        })
+    }
+
+    #[test]
+    fn responses_request_becomes_canonical_anthropic() {
+        let out = responses_to_anthropic_request(&codex_request(), "up-model");
+        assert_eq!(out["model"], "up-model");
+        // instructions + developer fold into the system prompt.
+        assert_eq!(out["system"], "you are codex\n\ndev note");
+        let msgs = out["messages"].as_array().unwrap();
+        // Flat input coalesces into alternating user/assistant turns.
+        let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(
+            roles,
+            ["user", "assistant", "user", "assistant", "user"],
+            "{roles:?}"
+        );
+        // function_call/output -> tool_use/tool_result with the call id.
+        assert_eq!(msgs[1]["content"][1]["type"], "tool_use");
+        assert_eq!(msgs[1]["content"][1]["id"], "call_1");
+        assert_eq!(msgs[1]["content"][1]["input"]["cmd"], "ls");
+        assert_eq!(msgs[2]["content"][0]["type"], "tool_result");
+        assert_eq!(msgs[2]["content"][0]["tool_use_id"], "call_1");
+        // custom tool rides as a single-field function; its history wraps input.
+        assert_eq!(msgs[3]["content"][0]["type"], "tool_use");
+        assert_eq!(msgs[3]["content"][0]["input"]["input"], "*** Begin Patch");
+        assert_eq!(msgs[4]["content"][0]["tool_use_id"], "call_2");
+        let tools = out["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["shell", "apply_patch"], "{names:?}");
+        assert_eq!(
+            tools[1]["input_schema"]["properties"]["input"]["type"],
+            "string"
+        );
+        // web_search / namespace have no Anthropic equivalent.
+        assert_eq!(out["tool_choice"]["type"], "auto");
+        assert_eq!(out["max_tokens"], 16); // floored at the backend minimum
+        assert_eq!(out["stream"], true);
+        // reasoning/store/client_metadata never leak into the canonical body.
+        assert!(out.get("reasoning").is_none());
+        assert!(out.get("store").is_none());
+    }
+
+    #[test]
+    fn anthropic_response_becomes_responses_custom_aware() {
+        let custom: HashSet<String> = ["apply_patch".to_string()].into_iter().collect();
+        let resp = serde_json::json!({
+            "content": [
+                {"type": "text", "text": "patched"},
+                {"type": "tool_use", "id": "toolu_1", "name": "shell", "input": {"cmd": "ls"}},
+                {"type": "tool_use", "id": "toolu_2", "name": "apply_patch", "input": {"input": "*** End Patch"}}
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 3, "output_tokens": 5}
+        });
+        let out = anthropic_to_responses_response(&resp, "claude-x", &custom);
+        assert_eq!(out["status"], "completed");
+        assert_eq!(out["model"], "claude-x");
+        assert!(out["id"].as_str().unwrap().starts_with("resp_"));
+        let items = out["output"].as_array().unwrap();
+        assert_eq!(items[0]["type"], "message");
+        assert_eq!(items[0]["content"][0]["text"], "patched");
+        assert_eq!(items[1]["type"], "function_call");
+        assert_eq!(items[1]["call_id"], "toolu_1");
+        assert_eq!(items[1]["arguments"], "{\"cmd\":\"ls\"}");
+        // Custom tools round-trip back to custom_tool_call with the raw input.
+        assert_eq!(items[2]["type"], "custom_tool_call");
+        assert_eq!(items[2]["call_id"], "toolu_2");
+        assert_eq!(items[2]["input"], "*** End Patch");
+        assert_eq!(out["usage"]["total_tokens"], 8);
+    }
+
+    #[test]
+    fn anthropic_max_tokens_becomes_incomplete() {
+        let resp = serde_json::json!({
+            "content": [{"type": "text", "text": "cut off"}],
+            "stop_reason": "max_tokens",
+            "usage": {"input_tokens": 1, "output_tokens": 2}
+        });
+        let out = anthropic_to_responses_response(&resp, "m", &HashSet::new());
+        assert_eq!(out["status"], "incomplete");
+        assert_eq!(out["incomplete_details"]["reason"], "max_output_tokens");
     }
 }

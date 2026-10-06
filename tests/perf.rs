@@ -1003,3 +1003,64 @@ async fn perf_passthrough_and_count_tokens() {
         failures.join("\n")
     );
 }
+
+// ---------------------------------------------------------------------------
+// Codex edge (`POST /v1/responses`, Fase 1 passthrough). Appended: the Claude
+// scenarios above stay byte-identical, and `Expect::Sse` already fits the
+// Responses dialect (no new variant needed). Label rule: `[a-z_]+` only.
+// ---------------------------------------------------------------------------
+
+const CODEX_ENDPOINT: &str = "/v1/responses";
+const CODEX_ALIAS: &str = "claude-perf-codex";
+
+fn codex_body(model: &str) -> Value {
+    json!({
+        "model": model,
+        "instructions": "perf",
+        "input": [{"type": "message", "role": "user", "content": [
+            {"type": "input_text", "text": "hi"}
+        ]}],
+        "store": false,
+        "stream": true
+    })
+}
+
+#[tokio::test]
+async fn perf_codex_responses_edge() {
+    let sim = OpencodeSimulator::default();
+    let base = spawn_sim(sim.clone()).await;
+    let state = perf_state(
+        vec![perf_entry(&base, RESPONSES_PKG, "mock-perf-codex")],
+        vec![alias(CODEX_ALIAS, "opencode/mock-perf-codex")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let scenarios = [
+        Scenario {
+            label: "codex_stream",
+            alias: CODEX_ALIAS,
+            endpoint: CODEX_ENDPOINT,
+            body: codex_body,
+            expect: Expect::Sse("response.completed"),
+            counter: Counter::Responses,
+            heavy: false,
+            budget_ms: LIGHT_BUDGET_MS,
+        },
+        Scenario {
+            label: "codex_stream_heavy",
+            alias: CODEX_ALIAS,
+            endpoint: CODEX_ENDPOINT,
+            body: codex_body,
+            expect: Expect::Sse("response.completed"),
+            counter: Counter::Responses,
+            heavy: true,
+            budget_ms: HEAVY_BUDGET_MS,
+        },
+    ];
+    let failures = run_family(&server, &sim, &scenarios).await;
+    assert!(
+        failures.is_empty(),
+        "perf budget failures:\n{}",
+        failures.join("\n")
+    );
+}

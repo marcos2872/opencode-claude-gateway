@@ -1,7 +1,8 @@
 //! Streaming translators: Responses SSE and Chat SSE -> Anthropic SSE.
 
-use super::heartbeat::{sse, sse_error};
+use super::heartbeat::{responses_sse_error, sse, sse_error};
 use serde_json::Value;
+use std::collections::HashSet;
 
 /// Stateful translator: OpenAI Responses SSE -> Anthropic SSE event lines.
 #[derive(Debug, Default)]
@@ -369,6 +370,15 @@ impl StreamTranslator {
                         if block.id.is_empty() {
                             block.id = format!("toolu_{idx}");
                         }
+                        // zen-style upstreams emit id + name + complete
+                        // arguments in ONE chunk; the args riding along here
+                        // must join the buffer before the flush, or the whole
+                        // call goes out with `arguments: "{}"`.
+                        if let Some(a) = args {
+                            if !a.is_empty() {
+                                block.pending_args.push_str(a);
+                            }
+                        }
                         let bi = block.index;
                         let id = block.id.clone();
                         let name = block.name.clone();
@@ -433,6 +443,394 @@ impl StreamTranslator {
         out
     }
 }
+
+// ---------------------------------------------------------------------------
+// Anthropic SSE events -> Responses SSE — outbound dialect of the Codex edge
+// (Fase 2: Chat/Anthropic upstreams behind `POST /v1/responses`).
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Default, Clone)]
+struct OutBlock {
+    /// Anthropic `content_block` index this block maps from.
+    anth_index: usize,
+    output_index: u64,
+    /// False for `thinking`/`redacted_thinking` and anything unknown: dropped
+    /// wholesale (Anthropic reasoning has no Responses equivalent here).
+    emit: bool,
+    is_tool: bool,
+    /// Tool the client declared as `custom` (apply_patch): the round trip
+    /// rebuilds `custom_tool_call` items instead of `function_call`.
+    is_custom: bool,
+    item_id: String,
+    name: String,
+    call_id: String,
+    text: String,
+    args: String,
+    closed: bool,
+}
+
+/// Stateful translator: Anthropic message events -> Responses SSE frames.
+///
+/// Contract honored (the Codex parser is strict):
+/// - a terminal `response.completed` / `response.incomplete` / `response.failed`
+///   **before EOF** — [`ResponsesOutTranslator::finish_abrupt`] synthesizes
+///   `response.failed` when the upstream dies first;
+/// - tool arguments complete inside `response.output_item.done` (the
+///   `function_call_arguments.delta` events are no-ops for Codex, so they are
+///   not even emitted — the accumulated string lands on `.done`);
+/// - `response.completed` carries `response.id` plus integer
+///   `input_tokens`/`output_tokens`/`total_tokens`.
+#[derive(Debug)]
+pub struct ResponsesOutTranslator {
+    pub model: String,
+    response_id: String,
+    seq: u64,
+    created: bool,
+    pub finished: bool,
+    next_output_index: u64,
+    blocks: Vec<OutBlock>,
+    input_tokens: u64,
+    output_tokens: u64,
+    stop_reason: Option<String>,
+    output_items: Vec<Value>,
+    custom_tools: HashSet<String>,
+}
+
+impl ResponsesOutTranslator {
+    pub fn new(gateway_model: &str, custom_tools: HashSet<String>) -> Self {
+        Self {
+            model: gateway_model.to_string(),
+            response_id: format!(
+                "resp_{}",
+                &uuid::Uuid::new_v4().to_string().replace('-', "")[..24]
+            ),
+            seq: 0,
+            created: false,
+            finished: false,
+            next_output_index: 0,
+            blocks: vec![],
+            input_tokens: 0,
+            output_tokens: 0,
+            stop_reason: None,
+            output_items: vec![],
+            custom_tools,
+        }
+    }
+
+    fn frame(&mut self, mut v: Value) -> String {
+        self.seq += 1;
+        if let Some(obj) = v.as_object_mut() {
+            obj.insert("sequence_number".to_string(), Value::from(self.seq));
+        }
+        sse(&v)
+    }
+
+    fn ensure_created(&mut self, out: &mut Vec<String>) {
+        if self.created {
+            return;
+        }
+        self.created = true;
+        let frame = self.frame(serde_json::json!({
+            "type": "response.created",
+            "response": {
+                "id": self.response_id,
+                "object": "response",
+                "status": "in_progress",
+                "model": self.model,
+                "output": []
+            }
+        }));
+        out.push(frame);
+    }
+
+    /// Close any block the upstream never stopped (defensive: a terminal
+    /// frame must still carry complete items).
+    fn close_open_blocks(&mut self, out: &mut Vec<String>) {
+        for i in 0..self.blocks.len() {
+            if self.blocks[i].closed || !self.blocks[i].emit {
+                continue;
+            }
+            let block = self.blocks[i].clone();
+            self.blocks[i].closed = true;
+            out.push(self.done_frame(&block));
+        }
+    }
+
+    fn done_frame(&mut self, block: &OutBlock) -> String {
+        let item = if block.is_custom {
+            // Custom tools carry the freeform text in `input`; upstream saw a
+            // single-field function, so unwrap `{input: "..."}` back out.
+            let raw = if block.args.trim().is_empty() {
+                String::new()
+            } else {
+                serde_json::from_str::<Value>(&block.args)
+                    .ok()
+                    .and_then(|v| v.get("input").and_then(Value::as_str).map(str::to_string))
+                    .unwrap_or_else(|| block.args.clone())
+            };
+            serde_json::json!({
+                "type": "custom_tool_call",
+                "call_id": block.call_id,
+                "name": block.name,
+                "input": raw,
+                "status": "completed"
+            })
+        } else if block.is_tool {
+            let arguments = if block.args.trim().is_empty() {
+                "{}".to_string()
+            } else {
+                block.args.clone()
+            };
+            serde_json::json!({
+                "type": "function_call",
+                "id": block.item_id,
+                "call_id": block.call_id,
+                "name": block.name,
+                "arguments": arguments,
+                "status": "completed"
+            })
+        } else {
+            serde_json::json!({
+                "type": "message",
+                "id": block.item_id,
+                "status": "completed",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": block.text}]
+            })
+        };
+        self.output_items.push(item.clone());
+        self.frame(serde_json::json!({
+            "type": "response.output_item.done",
+            "output_index": block.output_index,
+            "item": item
+        }))
+    }
+
+    /// Terminal frame for a normal end (completed / incomplete).
+    fn terminal_frame(&mut self) -> String {
+        let incomplete = self.stop_reason.as_deref() == Some("max_tokens");
+        let mut response = serde_json::json!({
+            "id": self.response_id,
+            "object": "response",
+            "model": self.model,
+            "status": if incomplete { "incomplete" } else { "completed" },
+            "output": self.output_items,
+            "usage": {
+                "input_tokens": self.input_tokens,
+                "output_tokens": self.output_tokens,
+                "total_tokens": self.input_tokens + self.output_tokens
+            }
+        });
+        if incomplete {
+            response["incomplete_details"] = serde_json::json!({"reason": "max_output_tokens"});
+        }
+        let kind = if incomplete {
+            "response.incomplete"
+        } else {
+            "response.completed"
+        };
+        self.frame(serde_json::json!({"type": kind, "response": response}))
+    }
+
+    /// Feed one parsed Anthropic event payload, return Responses frames.
+    pub fn feed(&mut self, ev: &Value) -> Vec<String> {
+        if self.finished {
+            return vec![];
+        }
+        let mut out = vec![];
+        match ev.get("type").and_then(Value::as_str) {
+            Some("error") => {
+                let msg = ev
+                    .get("error")
+                    .and_then(|e| e.get("message"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("upstream stream error")
+                    .to_string();
+                self.finished = true;
+                out.push(responses_sse_error("upstream_error", &msg));
+                return out;
+            }
+            Some("message_start") => {
+                self.ensure_created(&mut out);
+                if let Some(u) = ev.get("message").and_then(|m| m.get("usage")) {
+                    if let Some(n) = u.get("input_tokens").and_then(Value::as_u64) {
+                        self.input_tokens = n;
+                    }
+                }
+            }
+            Some("content_block_start") => {
+                self.ensure_created(&mut out);
+                let Some(index) = ev.get("index").and_then(Value::as_u64) else {
+                    return out;
+                };
+                let Some(cb) = ev.get("content_block") else {
+                    return out;
+                };
+                let kind = cb.get("type").and_then(Value::as_str).unwrap_or("");
+                let emit = matches!(kind, "text" | "tool_use");
+                let is_tool = kind == "tool_use";
+                let name = cb.get("name").and_then(Value::as_str).unwrap_or("");
+                let is_custom = is_tool && self.custom_tools.contains(name);
+                let output_index = self.next_output_index;
+                self.next_output_index += 1;
+                let mut block = OutBlock {
+                    anth_index: index as usize,
+                    output_index,
+                    emit,
+                    is_tool,
+                    is_custom,
+                    item_id: if is_tool {
+                        format!("fc_{index}")
+                    } else {
+                        format!("msg_{index}")
+                    },
+                    name: name.to_string(),
+                    call_id: cb
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    ..Default::default()
+                };
+                if block.call_id.is_empty() && is_tool {
+                    block.call_id = block.item_id.clone();
+                }
+                if emit {
+                    let added = if is_custom {
+                        serde_json::json!({
+                            "type": "custom_tool_call",
+                            "call_id": block.call_id,
+                            "name": block.name,
+                            "input": "",
+                            "status": "in_progress"
+                        })
+                    } else if is_tool {
+                        serde_json::json!({
+                            "type": "function_call",
+                            "id": block.item_id,
+                            "call_id": block.call_id,
+                            "name": block.name,
+                            "arguments": "",
+                            "status": "in_progress"
+                        })
+                    } else {
+                        serde_json::json!({
+                            "type": "message",
+                            "id": block.item_id,
+                            "status": "in_progress",
+                            "role": "assistant",
+                            "content": []
+                        })
+                    };
+                    out.push(self.frame(serde_json::json!({
+                        "type": "response.output_item.added",
+                        "output_index": block.output_index,
+                        "item": added
+                    })));
+                }
+                self.blocks.push(block);
+            }
+            Some("content_block_delta") => {
+                let Some(index) = ev.get("index").and_then(Value::as_u64) else {
+                    return out;
+                };
+                let Some(delta) = ev.get("delta") else {
+                    return out;
+                };
+                let pos = self
+                    .blocks
+                    .iter()
+                    .position(|b| b.anth_index == index as usize && !b.closed);
+                let Some(pos) = pos else {
+                    return out;
+                };
+                match delta.get("type").and_then(Value::as_str) {
+                    Some("text_delta") => {
+                        let text = delta.get("text").and_then(Value::as_str).unwrap_or("");
+                        if !text.is_empty() && self.blocks[pos].emit && !self.blocks[pos].is_tool {
+                            self.blocks[pos].text.push_str(text);
+                            let block = self.blocks[pos].clone();
+                            out.push(self.frame(serde_json::json!({
+                                "type": "response.output_text.delta",
+                                "item_id": block.item_id,
+                                "output_index": block.output_index,
+                                "delta": text
+                            })));
+                        }
+                    }
+                    Some("input_json_delta") => {
+                        // Codex ignores argument deltas entirely; accumulate
+                        // and land the full string on `output_item.done`.
+                        let partial = delta
+                            .get("partial_json")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        if !partial.is_empty() && self.blocks[pos].emit && self.blocks[pos].is_tool
+                        {
+                            self.blocks[pos].args.push_str(partial);
+                        }
+                    }
+                    // thinking / signature deltas: dropped with their block.
+                    _ => {}
+                }
+            }
+            Some("content_block_stop") => {
+                let Some(index) = ev.get("index").and_then(Value::as_u64) else {
+                    return out;
+                };
+                let pos = self
+                    .blocks
+                    .iter()
+                    .position(|b| b.anth_index == index as usize && !b.closed);
+                if let Some(pos) = pos {
+                    self.blocks[pos].closed = true;
+                    if self.blocks[pos].emit {
+                        let frame = self.done_frame(&self.blocks[pos].clone());
+                        out.push(frame);
+                    }
+                }
+            }
+            Some("message_delta") => {
+                if let Some(d) = ev.get("delta") {
+                    if let Some(r) = d.get("stop_reason").and_then(Value::as_str) {
+                        self.stop_reason = Some(r.to_string());
+                    }
+                }
+                if let Some(u) = ev.get("usage") {
+                    if let Some(n) = u.get("input_tokens").and_then(Value::as_u64) {
+                        // Real Anthropic carries input on `message_start`; the
+                        // Chat bridge's intermediate translator only knows it
+                        // at the end, so accept it here too.
+                        self.input_tokens = n;
+                    }
+                    if let Some(n) = u.get("output_tokens").and_then(Value::as_u64) {
+                        self.output_tokens = n;
+                    }
+                }
+            }
+            Some("message_stop") => {
+                self.ensure_created(&mut out);
+                self.close_open_blocks(&mut out);
+                self.finished = true;
+                out.push(self.terminal_frame());
+            }
+            _ => {}
+        }
+        out
+    }
+
+    /// Synthetic terminal frame for an upstream that ended (EOF or read
+    /// error) without `message_stop`: Codex would otherwise wait its full
+    /// 300s idle timeout on a stream that already closed.
+    pub fn finish_abrupt(&mut self, message: &str) -> Vec<String> {
+        if self.finished {
+            return vec![];
+        }
+        self.finished = true;
+        vec![responses_sse_error("stream_closed", message)]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -579,5 +977,180 @@ mod tests {
             .expect("message_delta");
         assert!(delta.contains("\"input_tokens\":11"), "{delta}");
         assert!(delta.contains("\"output_tokens\":4"), "{delta}");
+    }
+
+    // -- Fase 2: Anthropic events -> Responses (Codex outbound) -------------
+
+    fn out_tr() -> ResponsesOutTranslator {
+        ResponsesOutTranslator::new("claude-x", HashSet::new())
+    }
+
+    #[test]
+    fn out_translator_text_stream_to_completed() {
+        let mut tr = out_tr();
+        let created = tr.feed(&serde_json::json!({
+            "type": "message_start",
+            "message": {"id": "msg_1", "usage": {"input_tokens": 11, "output_tokens": 0}}
+        }));
+        assert!(created[0].contains("response.created"), "{}", created[0]);
+        let added = tr.feed(&serde_json::json!({
+            "type": "content_block_start", "index": 0,
+            "content_block": {"type": "text", "text": ""}
+        }));
+        assert!(added[0].contains("output_item.added"), "{}", added[0]);
+        let delta = tr.feed(&serde_json::json!({
+            "type": "content_block_delta", "index": 0,
+            "delta": {"type": "text_delta", "text": "olá"}
+        }));
+        assert!(delta[0].contains("output_text.delta"), "{}", delta[0]);
+        let stop = tr.feed(&serde_json::json!({"type": "content_block_stop", "index": 0}));
+        assert!(stop[0].contains("output_item.done"), "{}", stop[0]);
+        assert!(stop[0].contains("olá"), "{}", stop[0]);
+        let _ = tr.feed(&serde_json::json!({
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn"},
+            "usage": {"input_tokens": 11, "output_tokens": 4}
+        }));
+        let term = tr.feed(&serde_json::json!({"type": "message_stop"}));
+        assert!(tr.finished);
+        let last = term.last().unwrap();
+        assert!(last.contains("response.completed"), "{last}");
+        assert!(last.contains("\"input_tokens\":11"), "{last}");
+        assert!(last.contains("\"total_tokens\":15"), "{last}");
+        // Terminal contract: nothing else is emitted after completion.
+        assert!(tr.feed(&serde_json::json!({"type": "ping"})).is_empty());
+    }
+
+    #[test]
+    fn out_translator_tool_arguments_land_on_done() {
+        let mut tr = out_tr();
+        let _ = tr.feed(&serde_json::json!({
+            "type": "message_start", "message": {"id": "msg_1", "usage": {"input_tokens": 1}}
+        }));
+        let _ = tr.feed(&serde_json::json!({
+            "type": "content_block_start", "index": 0,
+            "content_block": {"type": "tool_use", "id": "toolu_9", "name": "shell"}
+        }));
+        // Codex no-ops argument deltas; only the accumulated `.done` matters.
+        let d1 = tr.feed(&serde_json::json!({
+            "type": "content_block_delta", "index": 0,
+            "delta": {"type": "input_json_delta", "partial_json": "{\"cmd\":\"l"}
+        }));
+        assert!(d1.is_empty(), "{d1:?}");
+        let _ = tr.feed(&serde_json::json!({
+            "type": "content_block_delta", "index": 0,
+            "delta": {"type": "input_json_delta", "partial_json": "s\"}"}
+        }));
+        let done = tr.feed(&serde_json::json!({"type": "content_block_stop", "index": 0}));
+        assert!(done[0].contains("output_item.done"), "{}", done[0]);
+        assert!(done[0].contains("{\\\"cmd\\\":\\\"ls\\\"}"), "{}", done[0]);
+        assert!(done[0].contains("\"call_id\":\"toolu_9\""), "{}", done[0]);
+        let _ = tr.feed(&serde_json::json!({
+            "type": "message_delta", "delta": {"stop_reason": "tool_use"},
+            "usage": {"input_tokens": 1, "output_tokens": 2}
+        }));
+        let term = tr.feed(&serde_json::json!({"type": "message_stop"}));
+        assert!(term.last().unwrap().contains("response.completed"));
+    }
+
+    #[test]
+    fn out_translator_thinking_is_dropped() {
+        let mut tr = out_tr();
+        let _ = tr.feed(&serde_json::json!({
+            "type": "message_start", "message": {"id": "m", "usage": {"input_tokens": 1}}
+        }));
+        let start = tr.feed(&serde_json::json!({
+            "type": "content_block_start", "index": 0,
+            "content_block": {"type": "thinking", "thinking": "hidden"}
+        }));
+        assert!(start.is_empty(), "{start:?}");
+        let delta = tr.feed(&serde_json::json!({
+            "type": "content_block_delta", "index": 0,
+            "delta": {"type": "thinking_delta", "thinking": "more"}
+        }));
+        assert!(delta.is_empty(), "{delta:?}");
+        let stop = tr.feed(&serde_json::json!({"type": "content_block_stop", "index": 0}));
+        assert!(stop.is_empty(), "{stop:?}");
+        let _ = tr.feed(&serde_json::json!({
+            "type": "message_delta", "delta": {"stop_reason": "end_turn"},
+            "usage": {"input_tokens": 1, "output_tokens": 1}
+        }));
+        let term = tr.feed(&serde_json::json!({"type": "message_stop"}));
+        // No output items were ever produced (thinking only).
+        assert!(
+            term.last().unwrap().contains("\"output\":[]"),
+            "{}",
+            term.last().unwrap()
+        );
+    }
+
+    #[test]
+    fn out_translator_error_and_abrupt_end_fail() {
+        let mut tr = out_tr();
+        let failed = tr.feed(&serde_json::json!({
+            "type": "error", "error": {"type": "api_error", "message": "overloaded"}
+        }));
+        assert!(failed[0].contains("response.failed"), "{}", failed[0]);
+        assert!(failed[0].contains("overloaded"), "{}", failed[0]);
+        assert!(tr.finished);
+        // Terminal already sent: nothing more, even on EOF.
+        assert!(tr.finish_abrupt("closed").is_empty());
+
+        let mut tr2 = out_tr();
+        let gap = tr2.finish_abrupt("upstream stream closed before response.completed");
+        assert!(gap[0].contains("response.failed"), "{}", gap[0]);
+        assert!(gap[0].contains("stream_closed"), "{}", gap[0]);
+        assert!(tr2.finished);
+    }
+
+    #[test]
+    fn out_translator_max_tokens_is_incomplete() {
+        let mut tr = out_tr();
+        let _ = tr.feed(&serde_json::json!({
+            "type": "message_start", "message": {"id": "m", "usage": {"input_tokens": 2}}
+        }));
+        let _ = tr.feed(&serde_json::json!({
+            "type": "content_block_start", "index": 0,
+            "content_block": {"type": "text", "text": ""}
+        }));
+        let _ = tr.feed(&serde_json::json!({
+            "type": "content_block_delta", "index": 0,
+            "delta": {"type": "text_delta", "text": "cut"}
+        }));
+        let _ = tr.feed(&serde_json::json!({"type": "content_block_stop", "index": 0}));
+        let _ = tr.feed(&serde_json::json!({
+            "type": "message_delta", "delta": {"stop_reason": "max_tokens"},
+            "usage": {"output_tokens": 3}
+        }));
+        let term = tr.feed(&serde_json::json!({"type": "message_stop"}));
+        let last = term.last().unwrap();
+        assert!(last.contains("response.incomplete"), "{last}");
+        assert!(last.contains("max_output_tokens"), "{last}");
+    }
+
+    #[test]
+    fn stream_translator_keeps_args_that_arrive_with_the_name() {
+        // zen-style upstreams emit the whole tool call in ONE chunk: id,
+        // name and the complete arguments together. The name branch used to
+        // drop the args riding in that same delta, so the client got
+        // `arguments: "{}"` and failed tool parsing (`missing field cmd`).
+        let mut t = StreamTranslator::new("gw");
+        let _ = t.prefix();
+        let ev = t.feed(&serde_json::json!({
+            "choices": [{"delta": {"tool_calls": [
+                {"index": 0, "id": "call_1",
+                 "function": {"name": "exec_command", "arguments": "{\"cmd\":\"ls\"}"}}
+            ]}}]
+        }));
+        assert!(
+            ev.iter()
+                .any(|e| e.contains("content_block_start") && e.contains("tool_use")),
+            "tool block opens: {ev:?}"
+        );
+        assert!(
+            ev.iter()
+                .any(|e| e.contains("input_json_delta") && e.contains("cmd")),
+            "args arriving with the name must flush: {ev:?}"
+        );
     }
 }

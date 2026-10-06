@@ -4,8 +4,11 @@
 //! (`api::server::{router, AppState, ...}`).
 
 use super::count_tokens::count_tokens;
-use super::errors::anthropic_error;
-use super::forward::{forward_anthropic, forward_openai, forward_responses, ForwardCtx};
+use super::errors::{anthropic_error, openai_error};
+use super::forward::{
+    forward_anthropic, forward_openai, forward_responses, forward_responses_passthrough,
+    forward_responses_translated, ForwardCtx,
+};
 use super::mock::mock_check_response;
 pub use super::state::AppState;
 use crate::domain::{protocol_for_entry, strip_window_suffix, window_suffix, Protocol};
@@ -25,13 +28,31 @@ pub use super::state::{BOOT_CATALOG_ATTEMPTS, BOOT_CATALOG_BACKOFF, BOOT_CATALOG
 
 const MAX_REQUEST_BODY: usize = 64 * 1024 * 1024;
 
+/// Base instructions every catalog row carries. Codex's `ModelsResponse`
+/// deserializer rejects a model that has neither `base_instructions` nor
+/// `model_messages.instructions_template`, and an empty prompt would leave
+/// the agent without its harness rules. Derived from Codex's bundled model
+/// instructions (Apache-2.0), first sentence de-GPT'd — see
+/// `docs/config-codex.md`.
+const CODEX_BASE_INSTRUCTIONS: &str = include_str!("codex_base_instructions.txt");
+
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let mut app = Router::new()
         .route("/health", get(health))
         .route("/v1/models", get(list_models))
         .route("/v1/messages/count_tokens", post(count_tokens))
-        .route("/v1/messages", post(messages))
-        .route_layer(middleware::from_fn_with_state(state.clone(), require_token))
+        .route("/v1/messages", post(messages));
+    // Codex/OpenAI edge. Registered before the auth layer so it inherits
+    // `require_token` like every other route; gated by `responses_endpoint`
+    // (default on) so the Anthropic-only deployment can opt out.
+    if state.config.responses_endpoint {
+        app = app
+            .route("/v1/responses", post(responses))
+            // Codex-native catalog for `model_catalog_url` (the picker only
+            // decodes `{"models":[...]}`, not the OpenAI `/v1/models` shape).
+            .route("/v1/models/codex", get(codex_models));
+    }
+    app.route_layer(middleware::from_fn_with_state(state.clone(), require_token))
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY))
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
@@ -48,6 +69,12 @@ async fn require_token(
     if req.uri().path() == "/health" || s.config.auth_token.is_empty() {
         return next.run(req).await;
     }
+    // Error shape follows the client edge: Codex (OpenAI dialect) cannot
+    // parse the Anthropic `{"type":"error"}` body, and vice-versa.
+    let on_codex_edge = {
+        let path = req.uri().path();
+        path.starts_with("/v1/responses") || path.starts_with("/v1/models/codex")
+    };
     let headers = req.headers();
     let bearer = headers
         .get("authorization")
@@ -60,6 +87,12 @@ async fn require_token(
         .unwrap_or("");
     if bearer == s.config.auth_token || key == s.config.auth_token {
         next.run(req).await
+    } else if on_codex_edge {
+        openai_error(
+            StatusCode::UNAUTHORIZED,
+            "authentication_error",
+            "invalid gateway credential (check OCG_AUTH_TOKEN)",
+        )
     } else {
         anthropic_error(
             StatusCode::UNAUTHORIZED,
@@ -131,6 +164,51 @@ async fn list_models(State(s): State<AppState>) -> impl IntoResponse {
         })
         .collect();
     Json(serde_json::json!({"object": "list", "data": data}))
+}
+
+/// Codex-native model catalog, served for the provider's `model_catalog_url`
+/// (`docs/config-codex.md`). The Codex picker decodes only
+/// `{"models": [ModelInfo...]}` — never the OpenAI `{"object":"list",
+/// "data":[...]}` shape of `/v1/models` — so this route reshapes the same
+/// alias rows into that dialect. Every gateway model qualifies: Responses
+/// upstreams go out as Fase 1 passthrough, the rest through the Fase 2
+/// translation.
+///
+/// Field set mirrors Codex's own `remote_model` fixture
+/// (`model-provider/src/provider.rs`); `context_window` carries the size so
+/// the `[1m]` display suffix from `/v1/models` is unnecessary here.
+async fn codex_models(State(s): State<AppState>) -> impl IntoResponse {
+    let aliases = s.aliases.read().await;
+    let mut models: Vec<Value> = vec![];
+    for (priority, a) in aliases.iter().enumerate() {
+        let mut item = serde_json::json!({
+            "slug": a.gateway_id,
+            "display_name": a.display_name,
+            "description": a.description,
+            "base_instructions": CODEX_BASE_INSTRUCTIONS,
+            "default_reasoning_level": "medium",
+            "supported_reasoning_levels": [
+                {"effort": "minimal", "description": "Minimal reasoning"},
+                {"effort": "low", "description": "Low reasoning"},
+                {"effort": "medium", "description": "Medium reasoning"},
+                {"effort": "high", "description": "High reasoning"},
+            ],
+            "shell_type": "unified_exec",
+            "visibility": "list",
+            "supported_in_api": true,
+            "priority": priority as i32,
+            "support_verbosity": false,
+            "truncation_policy": {"mode": "bytes", "limit": 10000},
+            "experimental_supported_tools": [],
+        });
+        if let Some(w) = a.context_window {
+            let w = i64::try_from(w).unwrap_or(i64::MAX);
+            item["context_window"] = Value::from(w);
+            item["max_context_window"] = Value::from(w);
+        }
+        models.push(item);
+    }
+    Json(serde_json::json!({ "models": models }))
 }
 
 async fn messages(
@@ -228,6 +306,101 @@ async fn messages(
         }
         Protocol::ChatCompletions => {
             forward_openai(ForwardCtx {
+                s: &s,
+                headers: &headers,
+                body: &body,
+                entry: &entry,
+                base: &base,
+                bearer: &bearer,
+                gateway_model: &requested,
+                stream,
+                variant: variant.as_deref(),
+            })
+            .await
+        }
+    }
+}
+
+/// The OpenAI Responses edge for Codex clients. Mirrors `messages()` minus
+/// the Claude Code specifics: no `mock_classifier` (that probe is Claude
+/// Code only) and OpenAI error shapes everywhere. Responses-upstream models
+/// go out as passthrough; Chat/Anthropic upstreams go through the Fase 2
+/// canonical translation (`forward_responses_translated`).
+async fn responses(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let raw = body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or("")
+        .to_string();
+    // The Codex config sends the id verbatim; the window-suffix strip is
+    // harmless here and lets a copied `[1m]` id resolve like in Claude Code.
+    // Ids outside the gateway catalog (Codex's own bundled defaults, e.g.
+    // `gpt-6-luna`) fall back to `default_model` instead of fuzzy-matching
+    // an arbitrary catalog row — see `AppState::codex_model_or_default`.
+    let requested = if raw.is_empty() {
+        s.effective_default().await
+    } else {
+        s.codex_model_or_default(strip_window_suffix(&raw)).await
+    };
+    if requested.is_empty() {
+        return openai_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "missing model (and no default_model configured)",
+        );
+    }
+    let stream = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let (entry, variant) = match s.resolve(&requested).await {
+        Ok(ok) => ok,
+        Err(msg) => {
+            return openai_error(StatusCode::NOT_FOUND, "not_found_error", &msg);
+        }
+    };
+
+    let store = CredentialStore::new(s.db_path.clone());
+    let Some(bearer) = upstream_bearer(&entry, &store) else {
+        return openai_error(
+            StatusCode::UNAUTHORIZED,
+            "authentication_error",
+            &format!(
+                "no stored credential for '{}' (run `opencode auth login`)",
+                entry.provider_id
+            ),
+        );
+    };
+
+    let Some(base) = entry.base_url().map(|x| x.to_string()) else {
+        return openai_error(
+            StatusCode::BAD_GATEWAY,
+            "server_error",
+            &format!("provider '{}' has no baseURL", entry.provider_id),
+        );
+    };
+
+    match protocol_for_entry(&entry) {
+        Protocol::Responses => {
+            forward_responses_passthrough(ForwardCtx {
+                s: &s,
+                headers: &headers,
+                body: &body,
+                entry: &entry,
+                base: &base,
+                bearer: &bearer,
+                gateway_model: &requested,
+                stream,
+                variant: variant.as_deref(),
+            })
+            .await
+        }
+        Protocol::ChatCompletions | Protocol::Anthropic => {
+            forward_responses_translated(ForwardCtx {
                 s: &s,
                 headers: &headers,
                 body: &body,

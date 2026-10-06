@@ -1,7 +1,7 @@
 # Configuração do gateway
 
 [← README](../README.md) · **Configuração** · [CLI](config-cli.md) ·
-[Desktop](config-desktop.md) · [Erros](erros.md) · [Dev](dev.md) ·
+[Desktop](config-desktop.md) · [Codex](config-codex.md) · [Erros](erros.md) · [Dev](dev.md) ·
 [Arquitetura](arquitetura.md)
 
 Referência das opções do `config.toml`, dos overrides por variável de ambiente e de
@@ -135,6 +135,17 @@ continuam encaminhadas normalmente, inclusive no modelo do Copilot selecionado.
 > sem `tools`) usam outro prompt e passam direto — para essas, use os tiers
 > em [Configuração do Desktop](config-desktop.md#tiers-da-família-anthropic), não o mock.
 
+## Edge do Codex (`responses_endpoint`)
+
+Além de `POST /v1/messages` (Claude Code / Claude Desktop), o gateway serve
+`POST /v1/responses` (dialecto **OpenAI Responses API**, o único que o Codex
+fala) e `GET /v1/models/codex` (catálogo nativo para o picker do Codex). A
+chave `responses_endpoint` (default `true`) liga/desliga as duas rotas — com
+`false` o gateway volta a ser exclusivamente Anthropic. Modelos de upstream
+Responses usam passthrough; Chat/Anthropic passam pela tradução canônica
+(Fase 2). Setup completo do cliente em
+[Configuração no Codex](config-codex.md).
+
 ## Escolhendo modelos — modelMap
 
 Você escolhe modelos dentro do Claude Code via `/model`, alimentado por
@@ -191,4 +202,5 @@ parâmetro do wire protocol do upstream:
 
 - [Configuração no Claude Code CLI](config-cli.md) — env, `settings.json`, subagentes.
 - [Configuração no Claude Desktop](config-desktop.md) — managed-settings, `[tiers]`.
+- [Configuração no Codex](config-codex.md) — Responses API, `~/.codex/config.toml`.
 - [Erros e diagnóstico](erros.md) — saúde do gateway e tabela de sintomas.

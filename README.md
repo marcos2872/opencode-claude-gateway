@@ -62,6 +62,7 @@ precisar. Aponte seu cliente para o gateway:
 
 - **Claude Code (CLI):** [Configuração no CLI](docs/config-cli.md)
 - **Claude Desktop:** [Configuração no Desktop](docs/config-desktop.md)
+- **Codex (Desktop/CLI):** [Configuração no Codex](docs/config-codex.md)
 
 ### Migrando do `frank-opencode`
 
@@ -98,6 +99,7 @@ pre-commit opcional. Como rodar em dev, testes, release e a suíte de latência:
 - [Configuração do gateway](docs/configuracao.md) — `config.toml`, auth, `default_model`, aliases, variantes.
 - [Configuração no Claude Code CLI](docs/config-cli.md) — env, `settings.json`, subagentes, blindagem do Copilot.
 - [Configuração no Claude Desktop](docs/config-desktop.md) — managed-settings, `desktop_aliases`, `[tiers]`.
+- [Configuração no Codex](docs/config-codex.md) — Responses API para o Codex (`POST /v1/responses`).
 - [Erros e diagnóstico](docs/erros.md) — `/health`, logs e tabela de sintomas.
 - [Desenvolvimento](docs/dev.md) — como rodar em dev, testes, lint, releases.
 - [Arquitetura](docs/arquitetura.md) — como o gateway é estruturado (domínio, infra, API).

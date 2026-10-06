@@ -183,3 +183,93 @@ jobs:
           # Em PR, publica como comentário sticky (marcador próprio: convive
           # com o do job test na mesma PR).
           bash .github/scripts/pr-sticky-comment.sh '<!-- ocg-ci-perf-summary -->' "$summary"
+
+  # Coverage informativo (não bloqueia o merge). Mesmo escopo do job `test`
+  # com instrumentação llvm-cov; publica o TOTAL + arquivos de menor cobertura
+  # no resumo e como comentário sticky na PR (marcador próprio).
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Coverage (report-only)
+        id: cov
+        continue-on-error: true
+        # `set -o pipefail` para que um `cargo llvm-cov` com testes falhando
+        # não seja mascarado pelo `tee`.
+        run: |
+          set -o pipefail
+          cargo llvm-cov --locked --all-targets --summary-only 2>&1 | tee /tmp/cov-output.txt
+          cargo llvm-cov --locked --all-targets --lcov --output-path /tmp/lcov.info >/dev/null 2>&1 || true
+
+      - name: Job summary (painel + comentário na PR)
+        # `always()` para o resumo sair mesmo quando a medição falha.
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COV: ${{ steps.cov.outcome }}
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          summary=$(mktemp)
+          {
+            echo "## Resumo do CI — \`coverage\`"
+            echo ""
+            echo "\`${REF}\` @ \`${SHA:0:7}\` — \`cargo llvm-cov --locked --all-targets\` (report-only)"
+            echo ""
+            if [ -f /tmp/cov-output.txt ]; then
+              total=$(grep -E '^TOTAL' /tmp/cov-output.txt || true)
+              if [ -n "$total" ]; then
+                echo "| Métrica | Cobertura |"
+                echo "| --- | --: |"
+                echo "| Regiões | $(echo "$total" | awk '{print $4}') |"
+                echo "| Funções | $(echo "$total" | awk '{print $7}') |"
+                echo "| Linhas | $(echo "$total" | awk '{print $10}') |"
+                echo ""
+                echo "<details><summary>Arquivos com menor cobertura de linhas</summary>"
+                echo ""
+                echo "| Arquivo | Linhas |"
+                echo "| --- | --: |"
+                grep -E '\.rs +[0-9]+ +[0-9]+ +[0-9.]+%' /tmp/cov-output.txt \
+                  | awk '{print "| " $1 " | " $10 " |"}' | sort -t'|' -k3 -n | head -n 10
+                echo ""
+                echo "</details>"
+              else
+                echo "_Sem linha TOTAL no output (medição falhou antes do relatório)._"
+                echo ""
+              fi
+            fi
+            case "$COV" in
+              success) echo "**Veredito:** ✅ medição concluída" ;;
+              failure) echo "**Veredito:** ❌ medição falhou (ver logs)" ;;
+              *) echo "**Veredito:** ⏭️ ${COV:-unknown}" ;;
+            esac
+          } > "$summary"
+          cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+          # Em PR, publica como comentário sticky (marcador próprio: convive
+          # com os dos jobs test e perf na mesma PR).
+          bash .github/scripts/pr-sticky-comment.sh '<!-- ocg-ci-cov-summary -->' "$summary"
+
+      - name: Upload lcov.info
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcov-info
+          path: /tmp/lcov.info
+          if-no-files-found: ignore

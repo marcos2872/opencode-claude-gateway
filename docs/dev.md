@@ -1,7 +1,7 @@
 # Desenvolvimento
 
 [← README](../README.md) · [Configuração](configuracao.md) · [CLI](config-cli.md) ·
-[Desktop](config-desktop.md) · [Erros](erros.md) · **Dev** ·
+[Desktop](config-desktop.md) · [Codex](config-codex.md) · [Erros](erros.md) · **Dev** ·
 [Arquitetura](arquitetura.md)
 
 Pré-requisitos: Rust stable, `opencode` v2 logado (`opencode auth login`).
@@ -9,10 +9,11 @@ Pré-requisitos: Rust stable, `opencode` v2 logado (`opencode auth login`).
 ## Comandos
 
 ```bash
-cargo test                    # testes unitários (tradução, aliases, config) + e2e (tests/gateway.rs)
+cargo test                    # testes unitários (tradução, aliases, config) + e2e (tests/gateway.rs, tests/codex.rs)
 cargo test --test gateway     # só os testes e2e do gateway
 cargo test --test perf        # latência de tradução do proxy (report-only em debug)
 cargo test <name>             # teste único por substring do nome
+cargo llvm-cov --locked --all-targets --summary-only  # cobertura (requer llvm-tools-preview + cargo-llvm-cov)
 cargo clippy -- -D warnings   # lint (precisa estar limpo)
 cargo fmt --check             # formatação (precisa estar limpa)
 ```
@@ -48,6 +49,29 @@ git config core.hooksPath .githooks
 ```
 
 Para pular um commit específico: `git commit --no-verify`.
+
+## Coverage
+
+Medição com `cargo-llvm-cov` (requer `rustup component add llvm-tools-preview` +
+`cargo install cargo-llvm-cov`, ambos fora do sandbox: os testes e2e fazem
+`bind` em sockets `127.0.0.1`, bloqueado no sandbox):
+
+```bash
+cargo llvm-cov --locked --all-targets --summary-only   # tabela por arquivo + TOTAL no terminal
+cargo llvm-cov --locked --all-targets --lcov --output-path lcov.info
+```
+
+Baseline em 2026-10-04 (`cargo-llvm-cov 0.9.1`, mesmo escopo do CI): **83,07%
+linhas · 83,00% funções · 83,15% regiões** (164 testes passando). Maiores gaps:
+`main.rs` 0% (entrypoint do binário), `daemon.rs` 20% (ciclo de vida do daemon),
+`infra/upstream/estimate.rs` 23% (fallback local do `count_tokens`),
+`autostart.rs` 44% e `infra/opencode.rs` 51% (dependem do binário/state real do
+OpenCode). 100%: `domain/protocol.rs`, `infra/upstream.rs`,
+`infra/upstream/heartbeat.rs`.
+
+O job `coverage` do CI é **report-only** (não bloqueia merge): publica o TOTAL +
+os 10 arquivos de menor cobertura no Summary e como comentário sticky na PR
+(`<!-- ocg-ci-cov-summary -->`), e anexa o `lcov.info` como artifact.
 
 ## Performance
 
@@ -212,11 +236,13 @@ Logs: `~/.local/share/opencode-claude-gateway/ocg.log`.
 ## Estado de build
 
 - `cargo clippy -- -D warnings` e `cargo fmt --check` precisam ficar limpos (como no CI).
-- Os testes e2e (`tests/gateway.rs`) usam um upstream mock — nunca chamam o binário real nem a rede.
+- Os testes e2e (`tests/gateway.rs`, `tests/codex.rs`) usam um upstream mock —
+  nunca chamam o binário real nem a rede.
 - O model catalog vem de `opencode api get /api/model`; os testes de servidor usam um `AppState` semeados.
 
 ## Veja também
 
 - [Arquitetura](arquitetura.md) — estrutura do código (domínio, infra, API).
 - [Configuração do gateway](configuracao.md) — opções de `config.toml`.
+- [Configuração no Codex](config-codex.md) — a segunda borda de cliente (`/v1/responses`).
 - [Erros e diagnóstico](erros.md) — sintomas comuns e logs.

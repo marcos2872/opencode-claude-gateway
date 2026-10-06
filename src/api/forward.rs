@@ -3,16 +3,17 @@
 //! Protocol-specific headers (Anthropic version/beta) stay in their forward.
 
 use super::errors::{
-    anthropic_error, log_upstream_error, request_summary, response_failure_message,
-    upstream_error_response,
+    anthropic_error, log_upstream_error, openai_error, openai_error_response, request_summary,
+    response_failure_message, upstream_error_response,
 };
 use super::session::session_headers;
 use super::state::AppState;
-use crate::domain::CatalogEntry;
+use crate::domain::{protocol_for_entry, CatalogEntry, Protocol};
 use crate::infra::upstream::{
-    anthropic_to_openai, anthropic_to_responses, apply_variant, apply_variant_checked, join_url,
-    openai_to_anthropic, responses_to_anthropic, sse, sse_error, with_heartbeat,
-    ResponsesTranslator, StreamTranslator,
+    anthropic_to_openai, anthropic_to_responses, anthropic_to_responses_response, apply_variant,
+    apply_variant_checked, codex_custom_tool_names, join_url, openai_to_anthropic,
+    responses_sse_error, responses_to_anthropic, responses_to_anthropic_request, sse, sse_error,
+    with_heartbeat, ResponsesOutTranslator, ResponsesTranslator, StreamTranslator,
 };
 use axum::{
     body::Body,
@@ -147,6 +148,23 @@ async fn send_json(
     }
 }
 
+/// [`send_json`] for the `/v1/responses` Codex edge: same plumbing, but the
+/// failure comes back in the OpenAI error shape (Codex cannot parse the
+/// Anthropic one).
+async fn send_json_openai(
+    req: reqwest::RequestBuilder,
+    body: &Value,
+) -> Result<reqwest::Response, Box<Response>> {
+    match req.json(body).send().await {
+        Ok(r) => Ok(r),
+        Err(e) => Err(Box::new(openai_error(
+            StatusCode::BAD_GATEWAY,
+            "server_error",
+            &format!("upstream unreachable: {e}"),
+        ))),
+    }
+}
+
 /// A non-2xx upstream status: log the privacy-safe summary and return the
 /// normalized Anthropic error shape. `summary_body` is whatever the caller
 /// logged before (the Anthropic forward logs its mutated body, the translated
@@ -192,6 +210,82 @@ fn drain_sse_payloads(buf: &mut Vec<u8>) -> Vec<String> {
             continue;
         }
         out.push(payload.to_string());
+    }
+    out
+}
+
+/// Byte-passthrough watchdog for the `/v1/responses` (Codex) edge: Codex
+/// rejects EOF without a terminal event (`ApiError::Stream`) and its parser
+/// treats bare `error` frames as no-ops, so an upstream that dies mid-stream
+/// would leave the client waiting the full 300s idle timeout. Watch the
+/// payloads as they flow through untouched and, if the stream ends (EOF or
+/// read error) before `response.completed` / `response.incomplete` /
+/// `response.failed`, emit a synthetic `response.failed` as the last frame.
+fn responses_terminal_claw<S>(
+    inner: S,
+) -> impl futures::Stream<Item = Result<Vec<u8>, std::io::Error>>
+where
+    S: futures::Stream<Item = Result<Vec<u8>, std::io::Error>>,
+{
+    async_stream::stream! {
+        let mut inner = Box::pin(inner);
+        let mut scan: Vec<u8> = vec![];
+        let mut terminal = false;
+        let mut failure: Option<String> = None;
+        while let Some(chunk) = inner.next().await {
+            let bytes = match chunk {
+                Ok(b) => b,
+                Err(e) => {
+                    failure = Some(format!("upstream stream read failed: {e}"));
+                    break;
+                }
+            };
+            if !terminal {
+                scan.extend_from_slice(&bytes);
+                for payload in drain_sse_payloads(&mut scan) {
+                    let Ok(v) = serde_json::from_str::<Value>(&payload) else { continue; };
+                    if matches!(
+                        v.get("type").and_then(|t| t.as_str()),
+                        Some("response.completed" | "response.incomplete" | "response.failed")
+                    ) {
+                        terminal = true;
+                        break;
+                    }
+                }
+            }
+            yield Ok(bytes);
+        }
+        if !terminal {
+            let (code, message) = match failure {
+                Some(e) => ("upstream_stream_error", e),
+                None => (
+                    "stream_closed",
+                    "upstream stream closed before response.completed".to_string(),
+                ),
+            };
+            yield Ok(responses_sse_error(code, &message).into_bytes());
+        }
+    }
+}
+
+/// Extract the JSON payloads from whole SSE frames (the Chat bridge emits
+/// Anthropic frames from `StreamTranslator`; the Responses shaper wants the
+/// parsed events).
+fn payloads_from_frames(frames: &[String]) -> Vec<Value> {
+    let mut out = vec![];
+    for frame in frames {
+        for line in frame.lines() {
+            let Some(payload) = line.strip_prefix("data:") else {
+                continue;
+            };
+            let payload = payload.trim();
+            if payload.is_empty() || payload == "[DONE]" {
+                continue;
+            }
+            if let Ok(v) = serde_json::from_str::<Value>(payload) {
+                out.push(v);
+            }
+        }
     }
     out
 }
@@ -474,6 +568,334 @@ pub(crate) async fn forward_responses(ctx: ForwardCtx<'_>) -> Response {
         }
         if let Some(msg) = upstream_error {
             yield Ok::<_, std::io::Error>(terminal_error_event(&msg).into_bytes());
+        }
+    };
+    sse_stream_response(out)
+}
+
+/// Fase 1 (edge Codex): `POST /v1/responses` → upstream Responses,
+/// byte-for-byte nas duas direções. Só entradas `Protocol::Responses`
+/// chegam aqui (o handler trava as demais com 501); upstreams Chat/Anthropic
+/// esperam a Fase 2 (tradução canônica).
+///
+/// O corpo do Codex segue quase intacto — só o `model` muda (mais a variante
+/// e os defaults do catálogo, mesma semântica dos outros caminhos: a variante
+/// do catálogo sobrepõe o `reasoning.effort` do cliente). Campos desconhecidos
+/// (`prompt_cache_key`, `client_metadata`, ...) seguem no corpo; se o backend
+/// Go rejeitar (400), `OCG_DUMP_RESPONSES_BODY` grava este corpo final para
+/// bisseção com `scripts/replay_responses.py`.
+pub(crate) async fn forward_responses_passthrough(ctx: ForwardCtx<'_>) -> Response {
+    let ForwardCtx {
+        s,
+        headers,
+        body,
+        entry,
+        base,
+        bearer,
+        gateway_model,
+        stream,
+        variant,
+    } = ctx;
+    let mut upstream_body = body.clone();
+    upstream_body["model"] = Value::String(entry.model_id.clone());
+    if let Some(v) = variant {
+        upstream_body = apply_variant(upstream_body, entry, v);
+    }
+    apply_entry_body(&mut upstream_body, entry);
+    dump_translated_body(&upstream_body, gateway_model);
+    let url = join_url(base, "responses");
+    let req = with_session_headers(
+        with_entry_headers(upstream_post(s, &url, bearer), entry),
+        headers,
+    );
+    let resp = match send_json_openai(req, &upstream_body).await {
+        Ok(r) => r,
+        Err(e) => return *e,
+    };
+    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        log_upstream_error(
+            entry,
+            gateway_model,
+            base,
+            status,
+            &text,
+            &request_summary(&upstream_body),
+            headers,
+        );
+        return openai_error_response(status, &text);
+    }
+    if !stream {
+        // Non-stream (cortesia: o Codex sempre pede stream) — repassa o JSON
+        // do upstream, reescrevendo `model` para o id do gateway.
+        let mut v: Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                return openai_error(
+                    StatusCode::BAD_GATEWAY,
+                    "server_error",
+                    &format!("invalid upstream JSON: {e}"),
+                )
+            }
+        };
+        if v.get("model").is_some() {
+            v["model"] = Value::String(gateway_model.to_string());
+        }
+        if let Some(uid) = v.get("id").and_then(|x| x.as_str()) {
+            tracing::debug!(upstream_id = uid, model = gateway_model, "upstream ok");
+        }
+        return Json(v).into_response();
+    }
+    // Streaming: byte passthrough atrás da garra de evento terminal; o
+    // heartbeat (em `sse_stream_response`) alimenta o idle timer de 300s do
+    // Codex durante pausas longas de raciocínio (`{"type":"ping"}` é um
+    // type desconhecido, ignorado com segurança pelo parser).
+    let inner = resp
+        .bytes_stream()
+        .map(|c| c.map(|b| b.to_vec()).map_err(std::io::Error::other));
+    sse_stream_response(responses_terminal_claw(inner))
+}
+
+/// Fase 2: Codex edge on Chat/Anthropic upstreams. The client body becomes a
+/// canonical Anthropic request (the only dialect every translator already
+/// speaks), goes upstream through the same plumbing as the other forwards,
+/// and the answer is reshaped back into Responses — streaming through
+/// [`ResponsesOutTranslator`], non-streaming through
+/// `anthropic_to_responses_response`. Errors stay in the OpenAI shape.
+///
+/// Unlike the Fase 1 passthrough, `reasoning`/`include` and the exotic tools
+/// (`web_search`, `namespace`) do not survive translation — documented in
+/// `docs/config-codex.md`. The catalog variant still applies to the
+/// translated body (existing semantics).
+pub(crate) async fn forward_responses_translated(ctx: ForwardCtx<'_>) -> Response {
+    let ForwardCtx {
+        s,
+        headers,
+        body,
+        entry,
+        base,
+        bearer,
+        gateway_model,
+        stream,
+        variant,
+    } = ctx;
+    let custom_tools = codex_custom_tool_names(body);
+    if let Some(tools) = body.get("tools").and_then(Value::as_array) {
+        let dropped: Vec<&str> = tools
+            .iter()
+            .filter_map(|t| {
+                let ty = t.get("type").and_then(Value::as_str).unwrap_or("");
+                (ty != "function" && ty != "custom").then_some(ty)
+            })
+            .collect();
+        if !dropped.is_empty() {
+            tracing::warn!(
+                model = %gateway_model,
+                tools = ?dropped,
+                "dropping tools without an Anthropic equivalent on the translated Codex path"
+            );
+        }
+    }
+
+    let protocol = protocol_for_entry(entry);
+    let anth = responses_to_anthropic_request(body, &entry.model_id);
+    // Same order as the existing forwards: translate first, then variant and
+    // catalog defaults land on the *translated* body.
+    let (url, out_body) = if matches!(protocol, Protocol::ChatCompletions) {
+        let mut b = anthropic_to_openai(&anth, &entry.model_id);
+        if let Some(v) = variant {
+            match apply_variant_checked(std::mem::take(&mut b), entry, v) {
+                Ok(applied) => b = applied,
+                Err(e) => {
+                    return openai_error(
+                        StatusCode::BAD_REQUEST,
+                        "invalid_request_error",
+                        &e.to_string(),
+                    )
+                }
+            }
+        }
+        apply_entry_body(&mut b, entry);
+        (join_url(base, "chat/completions"), b)
+    } else {
+        let mut b = anth.clone();
+        if let Some(v) = variant {
+            match apply_variant_checked(std::mem::take(&mut b), entry, v) {
+                Ok(applied) => b = applied,
+                Err(e) => {
+                    return openai_error(
+                        StatusCode::BAD_REQUEST,
+                        "invalid_request_error",
+                        &e.to_string(),
+                    )
+                }
+            }
+        }
+        apply_entry_body(&mut b, entry);
+        (join_url(base, "messages"), b)
+    };
+
+    let mut req = upstream_post(s, &url, bearer);
+    if matches!(protocol, Protocol::Anthropic) {
+        // Protocol-specific headers, mirrored from `forward_anthropic`.
+        req = req.header(
+            "anthropic-version",
+            headers
+                .get("anthropic-version")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("2023-06-01"),
+        );
+        if let Some(beta) = headers.get("anthropic-beta").and_then(|v| v.to_str().ok()) {
+            let merged = match entry_beta_header(entry) {
+                Some(catalog) if !catalog.is_empty() && !beta.contains(&catalog) => {
+                    format!("{beta}, {catalog}")
+                }
+                _ => beta.to_string(),
+            };
+            req = req.header("anthropic-beta", merged);
+        } else if let Some(catalog) = entry_beta_header(entry) {
+            req = req.header("anthropic-beta", catalog);
+        }
+        req = with_session_headers(
+            with_entry_headers_except(req, entry, &["anthropic-beta"]),
+            headers,
+        );
+    } else {
+        req = with_session_headers(with_entry_headers(req, entry), headers);
+    }
+
+    let resp = match send_json_openai(req, &out_body).await {
+        Ok(r) => r,
+        Err(e) => return *e,
+    };
+    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        log_upstream_error(
+            entry,
+            gateway_model,
+            base,
+            status,
+            &text,
+            &request_summary(&anth),
+            headers,
+        );
+        return openai_error_response(status, &text);
+    }
+    let is_chat = matches!(protocol, Protocol::ChatCompletions);
+
+    if !stream {
+        let v: Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                return openai_error(
+                    StatusCode::BAD_GATEWAY,
+                    "server_error",
+                    &format!("invalid upstream JSON: {e}"),
+                )
+            }
+        };
+        let anth_resp = if is_chat {
+            openai_to_anthropic(&v, gateway_model)
+        } else {
+            v
+        };
+        if let Some(uid) = anth_resp.get("id").and_then(Value::as_str) {
+            tracing::debug!(upstream_id = uid, model = gateway_model, "upstream ok");
+        }
+        return Json(anthropic_to_responses_response(
+            &anth_resp,
+            gateway_model,
+            &custom_tools,
+        ))
+        .into_response();
+    }
+
+    // Streaming: upstream dialect -> Anthropic events -> Responses frames.
+    let gw = gateway_model.to_string();
+    let ct = custom_tools.clone();
+    let byte_stream = resp.bytes_stream();
+    let out = async_stream::stream! {
+        let mut shaper = ResponsesOutTranslator::new(&gw, ct);
+        let mut chat_tr = is_chat.then(|| StreamTranslator::new(&gw));
+        let mut buf: Vec<u8> = vec![];
+        let mut pinned = Box::pin(byte_stream);
+        let mut chat_in: u64 = 0;
+        let mut chat_out: u64 = 0;
+        let mut chat_stop = "end_turn".to_string();
+        let mut upstream_error: Option<String> = None;
+        while let Some(chunk) = pinned.next().await {
+            let bytes = match chunk {
+                Ok(b) => b,
+                Err(e) => {
+                    upstream_error = Some(format!("upstream stream read failed: {e}"));
+                    break;
+                }
+            };
+            buf.extend_from_slice(&bytes);
+            for payload in drain_sse_payloads(&mut buf) {
+                let Ok(v) = serde_json::from_str::<Value>(&payload) else { continue; };
+                if let Some(tr) = chat_tr.as_mut() {
+                    // Chat SSE: track usage/finish, translate to Anthropic
+                    // events, then feed those to the Responses shaper.
+                    if let Some(u) = v.get("usage") {
+                        if let Some(n) = u.get("prompt_tokens").and_then(Value::as_u64) {
+                            chat_in = n;
+                        }
+                        if let Some(n) = u.get("completion_tokens").and_then(Value::as_u64) {
+                            chat_out = n;
+                        }
+                    }
+                    if let Some(fr) = v
+                        .get("choices")
+                        .and_then(|c| c.as_array())
+                        .and_then(|a| a.first())
+                        .and_then(|c| c.get("finish_reason"))
+                        .and_then(|f| f.as_str())
+                    {
+                        chat_stop = match fr {
+                            "tool_calls" => "tool_use".to_string(),
+                            "length" => "max_tokens".to_string(),
+                            _ => "end_turn".to_string(),
+                        };
+                    }
+                    let frames = tr.feed(&v);
+                    for fv in payloads_from_frames(&frames) {
+                        for f in shaper.feed(&fv) {
+                            yield Ok::<_, std::io::Error>(f.into_bytes());
+                        }
+                    }
+                } else {
+                    for f in shaper.feed(&v) {
+                        yield Ok::<_, std::io::Error>(f.into_bytes());
+                    }
+                }
+            }
+        }
+        drop(pinned);
+        if let Some(msg) = upstream_error {
+            for f in shaper.finish_abrupt(&msg) {
+                yield Ok::<_, std::io::Error>(f.into_bytes());
+            }
+        } else if let Some(mut tr) = chat_tr {
+            // Close the Anthropic intermediate first (synthesizes
+            // message_delta/message_stop), then the shaper's terminal frame.
+            let frames = tr.finish(&chat_stop, chat_in, chat_out);
+            for fv in payloads_from_frames(&frames) {
+                for f in shaper.feed(&fv) {
+                    yield Ok::<_, std::io::Error>(f.into_bytes());
+                }
+            }
+            if !shaper.finished {
+                for f in shaper.finish_abrupt("upstream stream closed before response.completed") {
+                    yield Ok::<_, std::io::Error>(f.into_bytes());
+                }
+            }
+        } else if !shaper.finished {
+            for f in shaper.finish_abrupt("upstream stream closed before response.completed") {
+                yield Ok::<_, std::io::Error>(f.into_bytes());
+            }
         }
     };
     sse_stream_response(out)
