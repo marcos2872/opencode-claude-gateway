@@ -58,8 +58,11 @@ flowchart LR
     desconhecidos). Chave por protocolo: Chat = `reasoning_effort` (labels fora
     do enum da OpenAI saturam para `high`), Responses = `reasoning`, Anthropic
     = no-op.
-  - `shared.rs` (interno ao crate): `floor_output_tokens` + o shaping
-    compartilhado de imagem/tool-result/body dos dois conversores.
+  - `shared.rs` (interno ao crate): `floor_output_tokens` +
+    `cached_input_tokens` (leitura tolerante dos contadores de cache do
+    `usage` upstream: `prompt_cache_hit_tokens` do DeepSeek,
+    `prompt_tokens_details.cached_tokens`, `input_tokens_details.cached_tokens`)
+    + o shaping compartilhado de imagem/tool-result/body dos dois conversores.
   - `estimate.rs`: `estimate_tokens` — contagem local por partes para
     `count_tokens` (sem tokenizer).
   - `heartbeat.rs`: `with_heartbeat` — injeta `event: ping` durante o silêncio
@@ -85,6 +88,15 @@ flowchart LR
 - **Formato de erro**: sempre `{"type":"error","error":{"type":...,"message":...}}`
   com tipos de erro Anthropic (`not_found_error`, `authentication_error`,
   `invalid_request_error`, `api_error`).
+- **Cache de prefixo do upstream**: os caminhos traduzidos (Chat/Responses)
+  leem os contadores de cache do `usage` upstream (`prompt_cache_hit_tokens`
+  do DeepSeek, `prompt_tokens_details.cached_tokens`,
+  `input_tokens_details.cached_tokens`) e os expõem como
+  `cache_read_input_tokens` no `usage` devolvido ao cliente — só quando > 0,
+  para o caso miss manter o shape exato de antes. Cada request de sucesso
+  também loga `upstream cache usage` em debug (`gateway_model`/`opencode_ref`/
+  `cached_input_tokens`/`input_tokens`). O passthrough Anthropic não muda
+  (verbatim, já inclui o que o upstream mandar).
 - **Refresh do catálogo** roda em background após o bind; `/health` fica
   `starting` até o primeiro sucesso, `degraded` após falha, `ok` caso contrário.
   Os testes constroem um `AppState` semeado e nunca chamam o binário real.
