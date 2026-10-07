@@ -28,6 +28,19 @@ Logs:
 
 O `ocg.log` é só-append: trunque de vez em quando (`: > ocg.log`).
 
+Para conferir se o cache de prefixo do upstream está acertando (ex. DeepSeek),
+rode com debug e procure a linha por request:
+
+```bash
+RUST_LOG=opencode_claude_gateway=debug ocg --serve 2>&1 | grep "upstream cache usage"
+# gateway_model=... opencode_ref=opencode-go/deepseek-v4.1-flash
+#   cached_input_tokens=80 input_tokens=100  -> 80 lidos do cache, 20 computados
+```
+
+O mesmo contador chega ao cliente como `usage.cache_read_input_tokens` na
+resposta `/v1/messages` (só quando > 0; no miss o campo é omitido). O
+passthrough Anthropic repassa o `usage` verbatim.
+
 ## Tabela de sintomas
 
 | Sintoma | Causa / correção |

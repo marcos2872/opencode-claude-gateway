@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-cargo test                    # unit + integration tests (tests/gateway.rs, tests/codex.rs)
+cargo test                    # unit + integration tests (tests/gateway.rs, tests/codex.rs, tests/cache_usage.rs)
 cargo test --test gateway     # only the e2e gateway tests
 cargo test --test perf        # proxy translation latency (report-only in debug)
 cargo test <name>             # single test by name substring

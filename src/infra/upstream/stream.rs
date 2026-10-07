@@ -14,6 +14,10 @@ pub struct ResponsesTranslator {
     pub tool_blocks: Vec<ResponsesToolBlock>,
     pub message_started: bool,
     pub input_tokens: u64,
+    /// Prefix-cache hits reported by the upstream `usage` (`response.completed`).
+    /// Set by the forward loop before `finish`; `0` (miss/unknown) keeps the
+    /// `message_delta` usage shape byte-identical to before.
+    pub cache_read_tokens: u64,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -216,10 +220,17 @@ impl ResponsesTranslator {
                 ));
             }
         }
+        let mut usage =
+            serde_json::json!({"input_tokens": input_tokens, "output_tokens": output_tokens});
+        // Only present on a real prefix-cache hit: the miss case keeps the
+        // `message_delta` usage shape byte-identical to before.
+        if self.cache_read_tokens > 0 {
+            usage["cache_read_input_tokens"] = serde_json::Value::from(self.cache_read_tokens);
+        }
         out.push(sse(&serde_json::json!({
             "type": "message_delta",
             "delta": {"stop_reason": stop_reason, "stop_sequence": null},
-            "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens}
+            "usage": usage
         })));
         out.push(sse(&serde_json::json!({"type": "message_stop"})));
         out
@@ -239,6 +250,10 @@ pub struct StreamTranslator {
     pub tool_blocks: Vec<ToolBlock>,
     pub message_started: bool,
     pub input_tokens: u64,
+    /// Prefix-cache hits reported by the upstream `usage` chunk.
+    /// Set by the forward loop before `finish`; `0` (miss/unknown) keeps the
+    /// `message_delta` usage shape byte-identical to before.
+    pub cache_read_tokens: u64,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -434,10 +449,17 @@ impl StreamTranslator {
                 ));
             }
         }
+        let mut usage =
+            serde_json::json!({"input_tokens": input_tokens, "output_tokens": output_tokens});
+        // Only present on a real prefix-cache hit: the miss case keeps the
+        // `message_delta` usage shape byte-identical to before.
+        if self.cache_read_tokens > 0 {
+            usage["cache_read_input_tokens"] = serde_json::Value::from(self.cache_read_tokens);
+        }
         out.push(sse(&serde_json::json!({
             "type": "message_delta",
             "delta": {"stop_reason": stop_reason, "stop_sequence": null},
-            "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens}
+            "usage": usage
         })));
         out.push(sse(&serde_json::json!({"type": "message_stop"})));
         out

@@ -9,7 +9,7 @@ Pré-requisitos: Rust stable, `opencode` v2 logado (`opencode auth login`).
 ## Comandos
 
 ```bash
-cargo test                    # testes unitários (tradução, aliases, config) + e2e (tests/gateway.rs, tests/codex.rs)
+cargo test                    # testes unitários (tradução, aliases, config) + e2e (tests/gateway.rs, tests/codex.rs, tests/cache_usage.rs)
 cargo test --test gateway     # só os testes e2e do gateway
 cargo test --test perf        # latência de tradução do proxy (report-only em debug)
 cargo test <name>             # teste único por substring do nome
@@ -236,8 +236,8 @@ Logs: `~/.local/share/opencode-claude-gateway/ocg.log`.
 ## Estado de build
 
 - `cargo clippy -- -D warnings` e `cargo fmt --check` precisam ficar limpos (como no CI).
-- Os testes e2e (`tests/gateway.rs`, `tests/codex.rs`) usam um upstream mock —
-  nunca chamam o binário real nem a rede.
+- Os testes e2e (`tests/gateway.rs`, `tests/codex.rs`, `tests/cache_usage.rs`)
+  usam um upstream mock — nunca chamam o binário real nem a rede.
 - O model catalog vem de `opencode api get /api/model`; os testes de servidor usam um `AppState` semeados.
 
 ## Veja também
