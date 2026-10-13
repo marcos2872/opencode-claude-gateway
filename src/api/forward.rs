@@ -3,17 +3,18 @@
 //! Protocol-specific headers (Anthropic version/beta) stay in their forward.
 
 use super::errors::{
-    anthropic_error, log_upstream_error, openai_error, openai_error_response, request_summary,
-    response_failure_message, upstream_error_response,
+    anthropic_error, log_cache_usage, log_upstream_error, openai_error, openai_error_response,
+    request_summary, response_failure_message, upstream_error_response,
 };
 use super::session::session_headers;
 use super::state::AppState;
 use crate::domain::{protocol_for_entry, CatalogEntry, Protocol};
 use crate::infra::upstream::{
     anthropic_to_openai, anthropic_to_responses, anthropic_to_responses_response, apply_variant,
-    apply_variant_checked, codex_custom_tool_names, join_url, openai_to_anthropic,
-    responses_sse_error, responses_to_anthropic, responses_to_anthropic_request, sse, sse_error,
-    with_heartbeat, ResponsesOutTranslator, ResponsesTranslator, StreamTranslator,
+    apply_variant_checked, cached_input_tokens, codex_custom_tool_names, join_url,
+    openai_to_anthropic, responses_sse_error, responses_to_anthropic,
+    responses_to_anthropic_request, sse, sse_error, with_heartbeat, ResponsesOutTranslator,
+    ResponsesTranslator, StreamTranslator,
 };
 use axum::{
     body::Body,
@@ -501,10 +502,22 @@ pub(crate) async fn forward_responses(ctx: ForwardCtx<'_>) -> Response {
         if let Some(uid) = v.get("id").and_then(|x| x.as_str()) {
             tracing::debug!(upstream_id = uid, model = gateway_model, "upstream ok");
         }
+        // Prefix-cache accounting (0 = miss or upstream doesn't report).
+        let usage = v.get("usage");
+        log_cache_usage(
+            gateway_model,
+            &entry.qualified(),
+            cached_input_tokens(usage),
+            usage
+                .and_then(|u| u.get("input_tokens"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        );
         return Json(responses_to_anthropic(&v, gateway_model)).into_response();
     }
     // Translated streaming: Responses SSE -> Anthropic SSE.
     let gw = gateway_model.to_string();
+    let opencode_ref = entry.qualified();
     let byte_stream = resp.bytes_stream();
     let out = async_stream::stream! {
         let mut tr = ResponsesTranslator::new(&gw);
@@ -513,6 +526,7 @@ pub(crate) async fn forward_responses(ctx: ForwardCtx<'_>) -> Response {
         let mut pinned = Box::pin(byte_stream);
         let mut output_tokens: u64 = 0;
         let mut input_tokens: u64 = 0;
+        let mut cache_read: u64 = 0;
         let mut incomplete = false;
         let mut upstream_error: Option<String> = None;
         while let Some(chunk) = pinned.next().await {
@@ -535,6 +549,12 @@ pub(crate) async fn forward_responses(ctx: ForwardCtx<'_>) -> Response {
                         }
                         if let Some(n) = u.get("output_tokens").and_then(Value::as_u64) {
                             output_tokens = n;
+                        }
+                        // Prefix-cache hits ride on the same usage object.
+                        let cached = cached_input_tokens(Some(u));
+                        if cached > 0 {
+                            cache_read = cached;
+                            tr.cache_read_tokens = cached;
                         }
                     }
                 }
@@ -566,6 +586,7 @@ pub(crate) async fn forward_responses(ctx: ForwardCtx<'_>) -> Response {
         for line in tr.finish(reason, input_tokens, output_tokens) {
             yield Ok::<_, std::io::Error>(line.into_bytes());
         }
+        log_cache_usage(&gw, &opencode_ref, cache_read, input_tokens);
         if let Some(msg) = upstream_error {
             yield Ok::<_, std::io::Error>(terminal_error_event(&msg).into_bytes());
         }
@@ -804,6 +825,19 @@ pub(crate) async fn forward_responses_translated(ctx: ForwardCtx<'_>) -> Respons
         if let Some(uid) = anth_resp.get("id").and_then(Value::as_str) {
             tracing::debug!(upstream_id = uid, model = gateway_model, "upstream ok");
         }
+        // Prefix-cache accounting (0 = miss or upstream doesn't report). The
+        // Chat branch already carries `cache_read_input_tokens` via
+        // `openai_to_anthropic`; the Anthropic branch carries it verbatim.
+        let anth_usage = anth_resp.get("usage");
+        log_cache_usage(
+            gateway_model,
+            &entry.qualified(),
+            cached_input_tokens(anth_usage),
+            anth_usage
+                .and_then(|u| u.get("input_tokens"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        );
         return Json(anthropic_to_responses_response(
             &anth_resp,
             gateway_model,
@@ -814,6 +848,7 @@ pub(crate) async fn forward_responses_translated(ctx: ForwardCtx<'_>) -> Respons
 
     // Streaming: upstream dialect -> Anthropic events -> Responses frames.
     let gw = gateway_model.to_string();
+    let opencode_ref = entry.qualified();
     let ct = custom_tools.clone();
     let byte_stream = resp.bytes_stream();
     let out = async_stream::stream! {
@@ -823,6 +858,9 @@ pub(crate) async fn forward_responses_translated(ctx: ForwardCtx<'_>) -> Respons
         let mut pinned = Box::pin(byte_stream);
         let mut chat_in: u64 = 0;
         let mut chat_out: u64 = 0;
+        let mut chat_cache: u64 = 0;
+        let mut anth_in: u64 = 0;
+        let mut anth_cache: u64 = 0;
         let mut chat_stop = "end_turn".to_string();
         let mut upstream_error: Option<String> = None;
         while let Some(chunk) = pinned.next().await {
@@ -846,6 +884,16 @@ pub(crate) async fn forward_responses_translated(ctx: ForwardCtx<'_>) -> Respons
                         if let Some(n) = u.get("completion_tokens").and_then(Value::as_u64) {
                             chat_out = n;
                         }
+                        // Prefix-cache hits ride on the same usage object; also
+                        // set on the intermediate translator so the synthesized
+                        // Anthropic `message_delta` carries it (the Responses
+                        // shaper ignores it — Codex edge shape is unchanged —
+                        // but the end-of-stream log below reports it).
+                        let cached = cached_input_tokens(Some(u));
+                        if cached > 0 {
+                            chat_cache = cached;
+                            tr.cache_read_tokens = cached;
+                        }
                     }
                     if let Some(fr) = v
                         .get("choices")
@@ -867,6 +915,27 @@ pub(crate) async fn forward_responses_translated(ctx: ForwardCtx<'_>) -> Respons
                         }
                     }
                 } else {
+                    // Anthropic upstream on the translated Codex edge: usage
+                    // arrives on `message_start` / `message_delta` events in
+                    // the Anthropic shape. The shaper ignores cache fields
+                    // (Codex edge shape is unchanged) — track them here only
+                    // for the end-of-stream log below.
+                    let usage_obj = match v.get("type").and_then(Value::as_str) {
+                        Some("message_start") => {
+                            v.get("message").and_then(|m| m.get("usage"))
+                        }
+                        Some("message_delta") => v.get("usage"),
+                        _ => None,
+                    };
+                    if let Some(u) = usage_obj {
+                        if let Some(n) = u.get("input_tokens").and_then(Value::as_u64) {
+                            anth_in = n;
+                        }
+                        let cached = cached_input_tokens(Some(u));
+                        if cached > 0 {
+                            anth_cache = cached;
+                        }
+                    }
                     for f in shaper.feed(&v) {
                         yield Ok::<_, std::io::Error>(f.into_bytes());
                     }
@@ -874,6 +943,10 @@ pub(crate) async fn forward_responses_translated(ctx: ForwardCtx<'_>) -> Respons
             }
         }
         drop(pinned);
+        // Prefix-cache accounting for the translated Codex edge (0 = miss or
+        // upstream doesn't report). Only one of the two branches ran: the max
+        // picks the active one without needing `is_chat` inside the stream.
+        log_cache_usage(&gw, &opencode_ref, chat_cache.max(anth_cache), chat_in.max(anth_in));
         if let Some(msg) = upstream_error {
             for f in shaper.finish_abrupt(&msg) {
                 yield Ok::<_, std::io::Error>(f.into_bytes());
@@ -951,10 +1024,22 @@ pub(crate) async fn forward_openai(ctx: ForwardCtx<'_>) -> Response {
         {
             tracing::debug!(upstream_id = uid, model = gateway_model, "upstream ok");
         }
+        // Prefix-cache accounting (0 = miss or upstream doesn't report).
+        let usage = v.get("usage");
+        log_cache_usage(
+            gateway_model,
+            &entry.qualified(),
+            cached_input_tokens(usage),
+            usage
+                .and_then(|u| u.get("prompt_tokens"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        );
         return Json(openai_to_anthropic(&v, gateway_model)).into_response();
     }
     // Translated streaming: OpenAI SSE -> Anthropic SSE.
     let gw = gateway_model.to_string();
+    let opencode_ref = entry.qualified();
     let byte_stream = resp.bytes_stream();
     let out = async_stream::stream! {
         let mut tr = StreamTranslator::new(&gw);
@@ -964,6 +1049,7 @@ pub(crate) async fn forward_openai(ctx: ForwardCtx<'_>) -> Response {
         let mut pinned = Box::pin(byte_stream);
         let mut output_tokens: u64 = 0;
         let mut input_tokens: u64 = 0;
+        let mut cache_read: u64 = 0;
         let mut stop_reason = "end_turn".to_string();
         let mut upstream_error: Option<String> = None;
         while let Some(chunk) = pinned.next().await {
@@ -984,6 +1070,12 @@ pub(crate) async fn forward_openai(ctx: ForwardCtx<'_>) -> Response {
                     }
                     if let Some(n) = u.get("completion_tokens").and_then(Value::as_u64) {
                         output_tokens = n;
+                    }
+                    // Prefix-cache hits ride on the same usage object.
+                    let cached = cached_input_tokens(Some(u));
+                    if cached > 0 {
+                        cache_read = cached;
+                        tr.cache_read_tokens = cached;
                     }
                 }
                 if let Some(fr) = v.get("choices").and_then(|c| c.as_array()).and_then(|a| a.first()).and_then(|c| c.get("finish_reason")).and_then(|f| f.as_str()) {
@@ -1012,6 +1104,7 @@ pub(crate) async fn forward_openai(ctx: ForwardCtx<'_>) -> Response {
         for line in tr.finish(&stop_reason, input_tokens, output_tokens) {
             yield Ok::<_, std::io::Error>(line.into_bytes());
         }
+        log_cache_usage(&gw, &opencode_ref, cache_read, input_tokens);
         if let Some(msg) = upstream_error {
             yield Ok::<_, std::io::Error>(terminal_error_event(&msg).into_bytes());
         }

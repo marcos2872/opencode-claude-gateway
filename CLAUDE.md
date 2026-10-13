@@ -5,16 +5,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-cargo test                    # unit + integration tests (tests/gateway.rs, tests/codex.rs)
-cargo test --test gateway     # only the e2e gateway tests
-cargo test --test perf        # proxy translation latency (report-only in debug)
+cargo test                    # unit + integration tests (tests/gateway.rs, tests/codex.rs, tests/cache_usage.rs, tests/perf.rs)
+cargo test --test gateway     # only the e2e gateway tests (Claude-compat canary)
+cargo test --test codex       # only the Codex `/v1/responses` edge
+cargo test --test cache_usage # only prefix-cache usage reporting
+cargo test --test perf        # proxy translation latency (report-only in debug, enforced in release)
 cargo test <name>             # single test by name substring
 cargo llvm-cov --locked --all-targets --summary-only  # cobertura (requer llvm-tools-preview + cargo-llvm-cov)
 cargo clippy -- -D warnings   # must stay clean
 cargo fmt --check             # must stay clean
 cargo run -- --refresh        # print catalog + gateway aliases, exit
 cargo run -- --serve          # foreground server on 127.0.0.1:3737
+cargo run -- --status         # daemon state + hint when run with no flag
 ```
+
+Debugging knobs (both read from the process env, so use `--serve`, not the
+daemon): `RUST_LOG=opencode_claude_gateway=debug` turns on per-request logs
+(including `upstream cache usage`); `OCG_DUMP_RESPONSES_BODY=<dir>` or `=1`
+(temp dir) writes each translated `/v1/responses` body to a file, never
+committed — bisect a rejected body with `scripts/replay_responses.py`.
 
 CI: `.github/workflows/ci.yml` runs `cargo fmt --all --check`, `cargo clippy
 --all-targets -- -D warnings` and `cargo test --all-targets` on every push and
@@ -83,11 +92,15 @@ Layers:
   - `shared.rs` (crate-internal): `floor_output_tokens` — raises `max_tokens` /
     `max_output_tokens` below 16 to 16 on translated protocols (the zen backend
     rejects smaller output limits; Claude Code probes model switches with
-    `max_tokens: 1`). The Anthropic passthrough path is untouched — plus the
-    shared image/tool-result/body shaping used by both converters; catalog
-    defaults (per-model `headers` and `body` fields, for example fast-mode
-    beta headers and `speed`) are merged into forwarded requests at the
-    `api/forward` layer.
+    `max_tokens: 1`). The Anthropic passthrough path is untouched —
+    `cached_input_tokens` — reads an upstream `usage` object's prefix-cache
+    hits (DeepSeek `prompt_cache_hit_tokens`, Chat
+    `prompt_tokens_details.cached_tokens`, Responses
+    `input_tokens_details.cached_tokens`, Anthropic `cache_read_input_tokens`;
+    first hit wins, `0` when absent) — plus the shared image/tool-result/body
+    shaping used by both converters; catalog defaults (per-model `headers` and
+    `body` fields, for example fast-mode beta headers and `speed`) are merged
+    into forwarded requests at the `api/forward` layer.
   - `estimate.rs`: `estimate_tokens` — per-part local count for `count_tokens`
     (no tokenizer).
   - `heartbeat.rs`: `with_heartbeat` — injects `event: ping` during upstream
@@ -95,13 +108,24 @@ Layers:
     used when the upstream stream fails or reports `response.failed` after
     opening; `responses_sse_error` — the `/v1/responses` edge's synthetic
     `response.failed` terminal frame (Codex ignores bare `error` events).
-- **`api/server.rs`** — Axum handlers. `body` flows: resolve model → pick
-  forward by `protocol_for_entry` (catalog `settings.endpoint` can override the
-  package for mixed `github-copilot` rows) → translate → merge catalog defaults
-  → apply variant → forward with `Bearer` credential + session headers
-  (`x-opencode-session`, always sent). The reqwest client uses a short
-  `connect_timeout` and a generous total `timeout` (`connect_timeout_secs` /
-  `request_timeout_secs`), because the total also bounds streaming responses.
+- **`api/server.rs`** — Axum handlers and routing. The file wires the routes
+  and owns the handler bodies, but most of the work lives in siblings it
+  re-exports under `api::server::*`: `api/state.rs` (`AppState` — the catalog +
+  alias map handlers share, `refresh` + `refresh_with_retry`,
+  `effective_default`, `resolve`), `api/forward.rs` (one `forward_*` per wire
+  protocol: `forward_anthropic`, `forward_openai`, `forward_responses`,
+  `forward_responses_passthrough`, `forward_responses_translated`),
+  `api/mock.rs`, `api/count_tokens.rs`, `api/session.rs` (`session_headers`)
+  and `api/errors.rs` (error shapes, `log_upstream_error`, `log_cache_usage`,
+  `request_summary`). New handler code usually belongs in a sibling module,
+  not in `server.rs`.
+  The `body` flow: resolve model → pick forward by `protocol_for_entry`
+  (catalog `settings.endpoint` can override the package for mixed
+  `github-copilot` rows) → translate → merge catalog defaults → apply variant →
+  forward with `Bearer` credential + session headers (`x-opencode-session`,
+  always sent). The reqwest client uses a short `connect_timeout` and a
+  generous total `timeout` (`connect_timeout_secs` / `request_timeout_secs`),
+  because the total also bounds streaming responses.
   Non-2xx upstream bodies are normalized to the Anthropic error shape
   (`upstream_error_response`), keeping the raw body only in the log — the
   `upstream rejected request` WARN also records `user_agent` and `session`
@@ -171,6 +195,12 @@ Layers:
   `{"error":{"message":...,"type":...,"code":...}}` — Codex cannot parse the
   Anthropic one (and its stream parser needs `response.completed`/`failed`
   before EOF, hence the terminal-event claw).
+- **Prefix-cache reporting**: the translated paths (Chat/Responses) surface the
+  upstream's cached-input counter as `usage.cache_read_input_tokens` on the
+  `/v1/messages` reply — only when `> 0`, so a miss keeps the exact old shape
+  (see `cached_input_tokens` and `log_cache_usage`, which logs one `upstream
+  cache usage` DEBUG line per request). The Anthropic passthrough `usage` is
+  forwarded verbatim and unchanged.
 - **Codex edge** (`POST /v1/responses`, `responses_endpoint`, default `true`):
   Responses-upstream models pass through byte-for-byte (opencode-go/zen
   `/responses` rows + Copilot `endpoint: "responses"`); Chat/Anthropic
@@ -193,6 +223,14 @@ Layers:
   load). `/health` stays `starting` until that first load, `degraded` after a
   failure, `ok` otherwise. Tests build a seeded `AppState` and never call the
   real binary.
+- **Integration tests are self-contained per client edge**, on purpose:
+  `tests/gateway.rs` is the Claude-compat canary and stays Claude-only,
+  `tests/codex.rs` covers the `/v1/responses` edge, `tests/cache_usage.rs`
+  covers cache reporting. A new feature gets its **own** test file (mirroring
+  the helpers of the file it is nearest to) instead of editing an existing one,
+  so a regression is still measured exactly where it always was. All of them
+  boot a seeded `AppState` over a mocked upstream on `127.0.0.1` — no real
+  `opencode` binary and no network.
 - **Docs are split by audience under `docs/`** (Portuguese): `README.md` is only
   the project presentation + binary install + links; `docs/configuracao.md`
   (gateway `config.toml`, auth, aliases, variants), `docs/config-cli.md` (Claude
@@ -201,4 +239,12 @@ Layers:
   `docs/erros.md` (health/logs/troubleshooting), `docs/dev.md` (dev, CI,
   releases) and `docs/arquitetura.md` (layers, MVP limits). Keep them in sync
   when behavior changes, and preserve the top-of-file nav line and the
-  "Veja também" cross-links between them.
+  "Veja também" cross-links between them. There are two independent config
+  surfaces: `src/config.rs`'s `CONFIG_TEMPLATE` (what the first run seeds) and
+  the hand-maintained `config.example.toml`; a test asserts the template lists
+  every `AppConfig` key, and the two files must be kept in sync.
+
+Maintenance rules that bite if ignored: `src/domain/` stays pure (no tokio,
+axum or rusqlite — the module doc says so); adding an `AppConfig` field also
+means adding it (commented) to `CONFIG_TEMPLATE` or `template_documents_every_config_key`
+fails; and `CLAUDE.md`/`AGENTS.md` are mirrors — change both.

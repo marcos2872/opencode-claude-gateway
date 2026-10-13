@@ -1,6 +1,8 @@
 //! Anthropic <-> OpenAI Chat Completions translation.
 
-use super::shared::{block_text, floor_output_tokens, parse_args, tool_result_parts};
+use super::shared::{
+    block_text, cached_input_tokens, floor_output_tokens, parse_args, tool_result_parts,
+};
 use serde_json::Value;
 
 /// Convert an Anthropic `/v1/messages` body into an OpenAI `/chat/completions` body.
@@ -314,6 +316,16 @@ pub fn openai_to_anthropic(resp: &Value, gateway_model: &str) -> Value {
     };
 
     let usage = resp.get("usage");
+    let cached = cached_input_tokens(usage);
+    let mut usage_obj = serde_json::json!({
+        "input_tokens": usage.and_then(|u| u.get("prompt_tokens")).and_then(|x| x.as_u64()).unwrap_or(0),
+        "output_tokens": usage.and_then(|u| u.get("completion_tokens")).and_then(|x| x.as_u64()).unwrap_or(0)
+    });
+    // Only present when the upstream actually reported a prefix-cache hit:
+    // existing clients/tests assert exact `usage` shapes for the miss case.
+    if cached > 0 {
+        usage_obj["cache_read_input_tokens"] = Value::from(cached);
+    }
     serde_json::json!({
         "id": msg_id,
         "type": "message",
@@ -322,10 +334,7 @@ pub fn openai_to_anthropic(resp: &Value, gateway_model: &str) -> Value {
         "content": content,
         "stop_reason": stop_reason,
         "stop_sequence": null,
-        "usage": {
-            "input_tokens": usage.and_then(|u| u.get("prompt_tokens")).and_then(|x| x.as_u64()).unwrap_or(0),
-            "output_tokens": usage.and_then(|u| u.get("completion_tokens")).and_then(|x| x.as_u64()).unwrap_or(0)
-        }
+        "usage": usage_obj
     })
 }
 #[cfg(test)]

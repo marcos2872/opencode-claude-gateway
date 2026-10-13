@@ -20,6 +20,37 @@ pub(crate) fn floor_output_tokens(v: &Value) -> Value {
         _ => v.clone(),
     }
 }
+
+/// Cached input tokens reported by an upstream `usage` object, across the
+/// wire shapes the gateway forwards. First hit wins, `0` when absent.
+///
+/// Shapes covered (no per-provider branching — every upstream that reports
+/// prefix-cache hits in one of these lands here):
+/// - DeepSeek-native `usage.prompt_cache_hit_tokens`
+/// - Chat Completions `usage.prompt_tokens_details.cached_tokens`
+/// - Responses `usage.input_tokens_details.cached_tokens`
+/// - Anthropic `usage.cache_read_input_tokens` (verbatim/translated bodies
+///   that already carry the Anthropic shape)
+pub(crate) fn cached_input_tokens(usage: Option<&Value>) -> u64 {
+    let Some(u) = usage else {
+        return 0;
+    };
+    if let Some(n) = u.get("prompt_cache_hit_tokens").and_then(Value::as_u64) {
+        return n;
+    }
+    for details_key in ["prompt_tokens_details", "input_tokens_details"] {
+        if let Some(n) = u
+            .get(details_key)
+            .and_then(|d| d.get("cached_tokens"))
+            .and_then(Value::as_u64)
+        {
+            return n;
+        }
+    }
+    u.get("cache_read_input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+}
 // ---------------------------------------------------------------------------
 // Anthropic -> OpenAI Chat Completions
 // ---------------------------------------------------------------------------

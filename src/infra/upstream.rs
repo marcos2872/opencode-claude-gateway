@@ -20,6 +20,7 @@ pub use responses::{
     anthropic_to_responses, anthropic_to_responses_response, codex_custom_tool_names,
     responses_to_anthropic, responses_to_anthropic_request,
 };
+pub(crate) use shared::cached_input_tokens;
 pub use stream::{ResponsesOutTranslator, ResponsesTranslator, StreamTranslator};
 pub use variant::{
     apply_variant, apply_variant_checked, normalize_reasoning, variant_plan, AnthropicVariantError,

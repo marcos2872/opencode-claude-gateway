@@ -174,6 +174,21 @@ pub(crate) fn log_upstream_error(
     );
 }
 
+/// Per-request prefix-cache accounting on the success path: how many of the
+/// reported input tokens the upstream served from its prompt cache (`0` =
+/// miss or upstream doesn't report). `debug!` like the `upstream ok` lines,
+/// so default runs stay quiet; `ocg.log` at debug level proves hits per
+/// `gateway_model` without exposing any prompt content.
+pub(crate) fn log_cache_usage(gateway_model: &str, opencode_ref: &str, cached: u64, input: u64) {
+    tracing::debug!(
+        gateway_model = %gateway_model,
+        opencode_ref = %opencode_ref,
+        cached_input_tokens = cached,
+        input_tokens = input,
+        "upstream cache usage"
+    );
+}
+
 /// Privacy-safe shape of the Anthropic request that failed: counts, block
 /// kinds and sizes only, never prompt/tool content. Lets us tell "poisoned
 /// history in this session" (e.g. a tool_result shape the translator or the
