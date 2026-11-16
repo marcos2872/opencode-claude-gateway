@@ -95,6 +95,7 @@ pre-commit opcional. Como rodar em dev, testes, release e a suíte de latência:
 
 ## Documentação
 
+- [Landing page](https://marcos2872.github.io/opencode-claude-gateway/) — apresentação visual (deploy automático de `web/` via GitHub Pages).
 - [Configuração do gateway](docs/configuracao.md) — `config.toml`, auth, `default_model`, aliases, variantes.
 - [Configuração no Claude Code CLI](docs/config-cli.md) — env, `settings.json`, subagentes, blindagem do Copilot.
 - [Configuração no Claude Desktop](docs/config-desktop.md) — managed-settings, `desktop_aliases`, `[tiers]`.
