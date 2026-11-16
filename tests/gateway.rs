@@ -19,6 +19,8 @@ use tokio::sync::Mutex;
 fn test_config() -> AppConfig {
     AppConfig {
         auth_token: "test-secret".to_string(),
+        // Tests never run an OpenCode server: use the CLI/SQLite fallbacks.
+        opencode_pair: false,
         ..AppConfig::default()
     }
 }
@@ -1106,10 +1108,11 @@ async fn e2e_chat_stream_failure_surfaces_error_event() {
         .await;
     assert_eq!(resp.status_code(), 200);
     let text = resp.text();
-    // Partial content still delivered, then an explicit error frame.
+    // Partial content still delivered, then the Anthropic terminal `error`
+    // frame. No `message_stop`: the turn did not complete.
     assert!(text.contains("partial"), "{text}");
-    assert!(text.contains("message_stop"), "{text}");
     assert!(text.contains("event: error"), "{text}");
+    assert!(!text.contains("message_stop"), "{text}");
 }
 
 // ---------------------------------------------------------------------------

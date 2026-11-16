@@ -13,4 +13,6 @@ pub use catalog::{
     CatalogEntry, CatalogLimit, CatalogSettings, ModelVariant, ModelVariantSettings, ThinkingConfig,
 };
 pub use model::ModelRef;
-pub use protocol::{is_known_package, protocol_for, protocol_for_entry, Protocol};
+pub use protocol::{
+    is_known_package, is_supported_package, protocol_for, protocol_for_entry, Protocol,
+};

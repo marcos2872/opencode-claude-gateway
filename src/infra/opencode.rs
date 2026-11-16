@@ -1,13 +1,16 @@
 //! Infra: how opencode-claude-gateway reads OpenCode v2 state.
 //!
 //! Rules (OpenCode v2):
-//! - Credentials live in SQLite `opencode.db`, table `credential`.
-//!   Path via `opencode debug paths db`, else OPENCODE_DB / XDG_DATA_HOME.
-//! - `auth.json` is legacy migration input only, NOT the source of truth.
-//! - Model catalog via `opencode api get /api/model` (handles service auth).
+//! - Preferred path: pair with the v2 server (`POST /api/pair` plus
+//!   `/auth/connect/:code`) and read catalog/credentials/providers over HTTP.
+//!   See `infra::pair`.
+//! - Offline fallback: credentials live in SQLite `opencode.db`, table
+//!   `credential`; path via `opencode debug paths db`, else OPENCODE_DB /
+//!   XDG_DATA_HOME. `auth.json` is legacy migration input only.
+//! - Offline catalog: `opencode api get /api/model` (handles service auth).
 
 use crate::domain::CatalogEntry;
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -114,8 +117,18 @@ pub fn unwrap_envelope(raw: &str) -> String {
     raw.to_string()
 }
 
+/// Parse the `/api/model` payload (`{"data":[...]}` or a bare array) into
+/// enabled catalog entries. Shared by the pair HTTP path and the CLI fallback.
+pub fn parse_catalog_json(v: serde_json::Value) -> Result<Vec<CatalogEntry>, String> {
+    let data = v.get("data").cloned().unwrap_or(v);
+    let entries: Vec<CatalogEntry> =
+        serde_json::from_value(data).map_err(|e| format!("catalog shape: {e}"))?;
+    Ok(entries.into_iter().filter(|e| e.enabled).collect())
+}
+
 /// Fetch the enabled model catalog via the OpenCode CLI (service-auth aware).
-pub fn fetch_catalog(opencode_bin: &str) -> Result<Vec<CatalogEntry>, String> {
+/// Offline fallback when the pair API is disabled or unreachable.
+pub fn fetch_catalog_cli(opencode_bin: &str) -> Result<Vec<CatalogEntry>, String> {
     let out = Command::new(opencode_bin)
         .args(["api", "get", "/api/model"])
         .output()
@@ -128,40 +141,7 @@ pub fn fetch_catalog(opencode_bin: &str) -> Result<Vec<CatalogEntry>, String> {
     }
     let v: serde_json::Value =
         serde_json::from_slice(&out.stdout).map_err(|e| format!("invalid catalog JSON: {e}"))?;
-    let data = v.get("data").cloned().unwrap_or(v);
-    let entries: Vec<CatalogEntry> =
-        serde_json::from_value(data).map_err(|e| format!("catalog shape: {e}"))?;
-    Ok(entries.into_iter().filter(|e| e.enabled).collect())
-}
-
-/// Upstream auth for a catalog entry:
-/// - provider `opencode` (free tier) uses the public key from settings.
-/// - everything else uses the stored credential for that integration id.
-pub fn upstream_bearer(entry: &CatalogEntry, store: &CredentialStore) -> Option<SecretString> {
-    if entry.provider_id == "opencode" {
-        if let Some(k) = entry.settings.api_key.clone() {
-            if !k.is_empty() {
-                return Some(SecretString::from(k));
-            }
-        }
-        return Some(SecretString::from("public".to_string()));
-    }
-    // The integration id matches the provider id (e.g. opencode-go).
-    // Fall back to the settings.provider hint when present.
-    if let Some(s) = store.get(&entry.provider_id) {
-        return Some(s);
-    }
-    if let Some(hint) = entry.settings.provider.as_deref() {
-        if hint != entry.provider_id {
-            return store.get(hint);
-        }
-    }
-    None
-}
-
-#[allow(dead_code)]
-pub fn debug_bearer_len(b: Option<&SecretString>) -> usize {
-    b.map(|s| s.expose_secret().len()).unwrap_or(0)
+    parse_catalog_json(v)
 }
 
 #[cfg(test)]

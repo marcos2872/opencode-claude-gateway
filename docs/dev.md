@@ -1,7 +1,7 @@
 # Desenvolvimento
 
 [← README](../README.md) · [Configuração](configuracao.md) · [CLI](config-cli.md) ·
-[Desktop](config-desktop.md) · [Codex](config-codex.md) · [Erros](erros.md) · **Dev** ·
+[Desktop](config-desktop.md) · [Erros](erros.md) · **Dev** ·
 [Arquitetura](arquitetura.md)
 
 Pré-requisitos: Rust stable, `opencode` v2 logado (`opencode auth login`).
@@ -9,8 +9,9 @@ Pré-requisitos: Rust stable, `opencode` v2 logado (`opencode auth login`).
 ## Comandos
 
 ```bash
-cargo test                    # testes unitários (tradução, aliases, config) + e2e (tests/gateway.rs, tests/codex.rs, tests/cache_usage.rs)
+cargo test                    # testes unitários (tradução, aliases, config) + e2e (tests/gateway.rs, tests/pair.rs, tests/cache_usage.rs)
 cargo test --test gateway     # só os testes e2e do gateway
+cargo test --test pair        # pareamento v2 + catálogo/providers/credenciais
 cargo test --test perf        # latência de tradução do proxy (report-only em debug)
 cargo test <name>             # teste único por substring do nome
 cargo llvm-cov --locked --all-targets --summary-only  # cobertura (requer llvm-tools-preview + cargo-llvm-cov)
@@ -143,38 +144,6 @@ curl -s http://127.0.0.1:3737/health | jq '{default_model, models}'
 curl -s http://127.0.0.1:3737/v1/models | jq -r '.data[0].id'
 ```
 
-### Dump do corpo traduzido (Responses)
-
-Quando um upstream rejeita um `/responses` traduzido, o log só tem contagens
-(`request_summary`), nunca o corpo — impossível dizer qual campo quebrou.
-`OCG_DUMP_RESPONSES_BODY` grava o JSON exato que seria enviado:
-
-```bash
-mkdir -p /tmp/ocg-dump
-OCG_DUMP_RESPONSES_BODY=/tmp/ocg-dump \
-  RUST_LOG=opencode_claude_gateway=warn cargo run -- --serve --port 3737
-# valor "1" (ou vazio) grava no diretório temporário do sistema
-```
-
-Cada request gera `ocg-resp-dump-<nanos>-<modelo>.json` e uma linha
-`dumped translated responses body path=...` (WARN) — cruze pelo horário com
-`upstream rejected request` para achar o corpo que falhou. Com o dump em mãos,
-replay/bisseção contra o upstream:
-
-```bash
-# repro e corte: full | ablate <chave> | front <n> | tailkeep <n> | pick <i,j,...>
-python3 scripts/replay_responses.py <dump.json> full
-```
-
-⚠️ O dump contém o **conteúdo integral do prompt** (diferente do log, que só
-tem contagens). Não commite, não publique; apague após o diagnóstico
-(`rm -rf /tmp/ocg-dump`).
-
-Útil para diagnosticar `400 The request contains invalid parameters` — ex.: o
-sintoma que levou à regra de defer em `infra/upstream/responses.rs` (texto de
-usuário entre `function_call`s pendentes e seus outputs era rejeitado pelo
-backend opencode-go).
-
 ## Resetando o cache do Claude Code (dev)
 
 O discovery (`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`) busca
@@ -236,13 +205,14 @@ Logs: `~/.local/share/opencode-claude-gateway/ocg.log`.
 ## Estado de build
 
 - `cargo clippy -- -D warnings` e `cargo fmt --check` precisam ficar limpos (como no CI).
-- Os testes e2e (`tests/gateway.rs`, `tests/codex.rs`, `tests/cache_usage.rs`)
-  usam um upstream mock — nunca chamam o binário real nem a rede.
-- O model catalog vem de `opencode api get /api/model`; os testes de servidor usam um `AppState` semeados.
+- Os testes e2e (`tests/gateway.rs`, `tests/pair.rs`, `tests/cache_usage.rs`)
+  usam um upstream mock — nunca chamam o binário real nem a rede. `tests/pair.rs`
+  usa um shim de `opencode` e um servidor v2 mock em loopback.
+- O model catalog vem do pareamento v2 (fallback `opencode api get /api/model`);
+  os testes de servidor usam um `AppState` semeado e `opencode_pair = false`.
 
 ## Veja também
 
 - [Arquitetura](arquitetura.md) — estrutura do código (domínio, infra, API).
 - [Configuração do gateway](configuracao.md) — opções de `config.toml`.
-- [Configuração no Codex](config-codex.md) — a segunda borda de cliente (`/v1/responses`).
 - [Erros e diagnóstico](erros.md) — sintomas comuns e logs.

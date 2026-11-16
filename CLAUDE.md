@@ -5,9 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-cargo test                    # unit + integration tests (tests/gateway.rs, tests/codex.rs, tests/cache_usage.rs, tests/perf.rs)
+cargo test                    # unit + integration tests (tests/gateway.rs, tests/pair.rs, tests/cache_usage.rs, tests/perf.rs)
 cargo test --test gateway     # only the e2e gateway tests (Claude-compat canary)
-cargo test --test codex       # only the Codex `/v1/responses` edge
+cargo test --test pair        # only the OpenCode v2 pair + catalog/credential tests
 cargo test --test cache_usage # only prefix-cache usage reporting
 cargo test --test perf        # proxy translation latency (report-only in debug, enforced in release)
 cargo test <name>             # single test by name substring
@@ -19,11 +19,9 @@ cargo run -- --serve          # foreground server on 127.0.0.1:3737
 cargo run -- --status         # daemon state + hint when run with no flag
 ```
 
-Debugging knobs (both read from the process env, so use `--serve`, not the
-daemon): `RUST_LOG=opencode_claude_gateway=debug` turns on per-request logs
-(including `upstream cache usage`); `OCG_DUMP_RESPONSES_BODY=<dir>` or `=1`
-(temp dir) writes each translated `/v1/responses` body to a file, never
-committed — bisect a rejected body with `scripts/replay_responses.py`.
+Debugging knob (read from the process env, so use `--serve`, not the daemon):
+`RUST_LOG=opencode_claude_gateway=debug` turns on per-request logs (including
+`upstream cache usage`).
 
 CI: `.github/workflows/ci.yml` runs `cargo fmt --all --check`, `cargo clippy
 --all-targets -- -D warnings` and `cargo test --all-targets` on every push and
@@ -69,10 +67,16 @@ Layers:
   default-on `cli_shield_aliases`, so CLI background calls stop landing on those
   rows; optional `desktop_aliases` rewriting for Claude Desktop's denylist;
   `strip_window_suffix` for `[1m]`/`[200k]` hints Claude Code appends to unknown ids).
-- **`infra/opencode.rs`** — OpenCode state. Credentials ONLY from the SQLite
-  `credential` table (read-only; never `auth.json` as source of truth; never
-  parse `opencode.jsonc`). Catalog via `opencode api get /api/model`. DB path
-  via `opencode debug paths db`.
+- **`infra/pair.rs`** — OpenCode v2 HTTP client. Pairs with the selected
+  service (`POST /api/pair` through the authenticated CLI, then
+  `GET /auth/connect/:code` with `Accept: application/json`), caches the
+  session token in `ocg.pair` (0600), renews on 401 and authenticates with
+  HTTP Basic `opencode:<token>`. Reads `/api/model`, `/api/provider`
+  (provider → `integrationID`) and `/api/credential`; credential selection
+  prefers the active row per integration. `opencode_pair = false` (or an
+  unreachable server) falls back to `infra/opencode.rs`: CLI catalog +
+  SQLite `credential` table (read-only; never `auth.json` as source of truth;
+  never parse `opencode.jsonc`), DB path via `opencode debug paths db`.
 - **`infra/upstream/`** — pure translators (no HTTP; `upstream.rs` re-exports
   the public surface plus `join_url`):
   - `chat.rs`: `anthropic_to_openai` / `openai_to_anthropic` (Chat Completions)
@@ -104,55 +108,32 @@ Layers:
   - `estimate.rs`: `estimate_tokens` — per-part local count for `count_tokens`
     (no tokenizer).
   - `heartbeat.rs`: `with_heartbeat` — injects `event: ping` during upstream
-    silence; `sse` / `sse_error` — Anthropic mid-stream frames, `sse_error`
-    used when the upstream stream fails or reports `response.failed` after
-    opening; `responses_sse_error` — the `/v1/responses` edge's synthetic
-    `response.failed` terminal frame (Codex ignores bare `error` events).
+    silence; `sse` / `sse_error` — Anthropic frames, `sse_error` used as the
+    terminal frame when the upstream stream fails after opening (no
+    `message_delta`/`message_stop` on a failed turn).
 - **`api/server.rs`** — Axum handlers and routing. The file wires the routes
   and owns the handler bodies, but most of the work lives in siblings it
   re-exports under `api::server::*`: `api/state.rs` (`AppState` — the catalog +
   alias map handlers share, `refresh` + `refresh_with_retry`,
-  `effective_default`, `resolve`), `api/forward.rs` (one `forward_*` per wire
-  protocol: `forward_anthropic`, `forward_openai`, `forward_responses`,
-  `forward_responses_passthrough`, `forward_responses_translated`),
-  `api/mock.rs`, `api/count_tokens.rs`, `api/session.rs` (`session_headers`)
-  and `api/errors.rs` (error shapes, `log_upstream_error`, `log_cache_usage`,
+  `effective_default`, `resolve`, `bearer_for`), `api/forward.rs` (one
+  `forward_*` per upstream wire protocol: `forward_anthropic`,
+  `forward_openai`, `forward_responses`), `api/mock.rs`,
+  `api/count_tokens.rs`, `api/session.rs` (`session_headers`) and
+  `api/errors.rs` (error shapes, `log_upstream_error`, `log_cache_usage`,
   `request_summary`). New handler code usually belongs in a sibling module,
   not in `server.rs`.
   The `body` flow: resolve model → pick forward by `protocol_for_entry`
   (catalog `settings.endpoint` can override the package for mixed
   `github-copilot` rows) → translate → merge catalog defaults → apply variant →
-  forward with `Bearer` credential + session headers (`x-opencode-session`,
-  always sent). The reqwest client uses a short `connect_timeout` and a
-  generous total `timeout` (`connect_timeout_secs` / `request_timeout_secs`),
-  because the total also bounds streaming responses.
+  forward with the pair-resolved `Bearer` credential + session headers
+  (`x-opencode-session`, always sent). Local providers (Ollama) carry no
+  credential, so the auth headers are optional. The reqwest client uses a short
+  `connect_timeout` and a generous total `timeout` (`connect_timeout_secs` /
+  `request_timeout_secs`), because the total also bounds streaming responses.
   Non-2xx upstream bodies are normalized to the Anthropic error shape
   (`upstream_error_response`), keeping the raw body only in the log — the
   `upstream rejected request` WARN also records `user_agent` and `session`
   (`x-claude-code-session-id`) so background callers can be attributed.
-  Second client edge: `POST /v1/responses` (Codex, OpenAI Responses dialect)
-  mirrors `messages()` minus `mock_classifier`, with OpenAI error shapes
-  everywhere (including `require_token`'s 401, path-specialized). It forwards
-  only `Protocol::Responses` entries via `forward_responses_passthrough`
-  (body/SSE byte-for-byte + catalog variant/defaults + terminal-event claw:
-  upstream truncation before `response.completed` emits a synthetic
-  `response.failed` before EOF); Chat/Anthropic upstreams get
-  Chat/Anthropic upstreams instead go through `forward_responses_translated`
-  (Fase 2): canonical Anthropic request (`responses_to_anthropic_request`)
-  → existing `anthropic_to_openai` for Chat rows → response reshaped back by
-  `anthropic_to_responses_response` / `ResponsesOutTranslator`
-  (Anthropic events → Responses SSE, custom tools round-trip as
-  `custom_tool_call`; `reasoning`/`include`/exotic tools dropped — see
-  docs/config-codex.md). Also under the flag:
-  `GET /v1/models/codex` — the Codex-native catalog for the provider's
-  `model_catalog_url` (`{"models":[...]}`, the only shape Codex's
-  `ModelsResponse` decodes), every gateway alias, each carrying
-  `base_instructions` (required by the Codex decoder; derived from Codex's
-  bundled prompt, Apache-2.0, trimmed to harness sections — Codex caps the
-  catalog download at 1 MiB and rejects the whole file above it, so the
-  size is guarded by `codex_catalog_stays_under_the_client_download_cap`;
-  asset in `src/api/codex_base_instructions.txt`).
-  Gated by `config.responses_endpoint` (default true).
 
 ## Conventions & gotchas
 
@@ -178,8 +159,18 @@ Layers:
   in `~/.claude/settings.json`. Prefer `[tiers]` keys by `provider/model` ref,
   which survive the automatic renames.
 - **Free-tier**: `opencode/*` models 403 outside OpenCode, so they are hidden
-  from `/v1/models` unless `include_free_tier = true`. They use the public key
-  from `settings.apiKey` (`upstream_bearer`).
+  from `/v1/models` unless `include_free_tier = true`. v2.3 gives the `opencode`
+  integration its own OAuth credential (shared by `opencode-go/*`), so the
+  legacy `settings.apiKey`/`public` fallback is only a last resort.
+- **Pairing / credentials** (`opencode_pair`, default on): `AppState::bearer_for`
+  first honors a catalog `settings.apiKey`, then resolves
+  provider → `integrationID` (`/api/provider`) → active credential
+  (`/api/credential`), then falls back to SQLite. Credentials are cached ~30s;
+  the pair token is cached in `ocg.pair` and re-acquired on 401. Local
+  providers with no integration (Ollama) get no auth headers.
+- **Unsupported packages**: `@opencode/ai/providers/google` speaks the native
+  Generative Language API, so `is_supported_package` hides those rows (WARN at
+  boot) instead of forwarding an OpenAI body to a Google endpoint.
 - **Session headers**: forwarding to Go always sends `x-opencode-session`
   (client's `x-claude-code-session-id`, then `x-opencode-session`, else a
   persisted fallback in `ocg.session`).
@@ -190,52 +181,36 @@ Layers:
   `anthropic-version` and session headers.
 - **Error shape**: always `{"type":"error","error":{"type":...,"message":...}}`
   with Anthropic error types (`not_found_error`, `authentication_error`,
-  `invalid_request_error`, `api_error`). Exception: everything on the
-  `/v1/responses` Codex edge uses the OpenAI shape
-  `{"error":{"message":...,"type":...,"code":...}}` — Codex cannot parse the
-  Anthropic one (and its stream parser needs `response.completed`/`failed`
-  before EOF, hence the terminal-event claw).
+  `invalid_request_error`, `api_error`). A mid-stream upstream failure is an
+  Anthropic `error` event and ends the stream — never `message_stop`.
 - **Prefix-cache reporting**: the translated paths (Chat/Responses) surface the
   upstream's cached-input counter as `usage.cache_read_input_tokens` on the
   `/v1/messages` reply — only when `> 0`, so a miss keeps the exact old shape
   (see `cached_input_tokens` and `log_cache_usage`, which logs one `upstream
   cache usage` DEBUG line per request). The Anthropic passthrough `usage` is
   forwarded verbatim and unchanged.
-- **Codex edge** (`POST /v1/responses`, `responses_endpoint`, default `true`):
-  Responses-upstream models pass through byte-for-byte (opencode-go/zen
-  `/responses` rows + Copilot `endpoint: "responses"`); Chat/Anthropic
-  upstreams use the Fase 2 canonical translation (all models work; the
-  effort selector only reaches Responses upstreams — translated upstreams
-  rely on the catalog variant). A model id that is neither a gateway alias
-  nor an explicit `provider/model` ref falls back to `default_model`
-  (`AppState::codex_model_or_default`) — Codex's bundled slugs like
-  `gpt-6-luna` would otherwise fuzzy-match an arbitrary catalog row and burn
-  Copilot quota; empty `default_model` keeps the old 404. Codex's
-  `session-id`/`thread-id` headers feed `x-opencode-session` only after the
-  Claude headers are checked, so the Claude path is byte-identical. Codex
-  tests live in the self-contained `tests/codex.rs`; `tests/gateway.rs`
-  stays Claude-only on purpose (compatibility canary). Codex's picker lists
-  models via `GET /v1/models/codex` (`model_catalog_url` in
-  `~/.codex/config.toml`); TOML gotcha: top-level `model`/`model_provider`
-  keys must sit before the first `[table]` or they silently join that table.
+- **Responses upstreams** (`opencode/*` Muse rows, `opencode-go` GPT/Grok,
+  Copilot `openai-compatible-responses`) still use `forward_responses` and the
+  Anthropic↔Responses translators on `/v1/messages`; there is no OpenAI-facing
+  client edge anymore.
 - **Catalog is read once** in a background task after bind (no periodic refresh;
   remove/restart to pick up new models, `--refresh` previews what boot would
   load). `/health` stays `starting` until that first load, `degraded` after a
   failure, `ok` otherwise. Tests build a seeded `AppState` and never call the
   real binary.
-- **Integration tests are self-contained per client edge**, on purpose:
+- **Integration tests are self-contained per feature**, on purpose:
   `tests/gateway.rs` is the Claude-compat canary and stays Claude-only,
-  `tests/codex.rs` covers the `/v1/responses` edge, `tests/cache_usage.rs`
-  covers cache reporting. A new feature gets its **own** test file (mirroring
-  the helpers of the file it is nearest to) instead of editing an existing one,
-  so a regression is still measured exactly where it always was. All of them
-  boot a seeded `AppState` over a mocked upstream on `127.0.0.1` — no real
-  `opencode` binary and no network.
+  `tests/pair.rs` covers the v2 pair flow + catalog/providers/credentials
+  (shim `opencode` + a loopback v2 mock), `tests/cache_usage.rs` covers cache
+  reporting. A new feature gets its **own** test file (mirroring the helpers of
+  the file it is nearest to) instead of editing an existing one, so a
+  regression is still measured exactly where it always was. All of them boot a
+  seeded `AppState` over a mocked upstream on `127.0.0.1` — no real `opencode`
+  binary and no network outside loopback.
 - **Docs are split by audience under `docs/`** (Portuguese): `README.md` is only
   the project presentation + binary install + links; `docs/configuracao.md`
-  (gateway `config.toml`, auth, aliases, variants), `docs/config-cli.md` (Claude
-  Code CLI setup), `docs/config-desktop.md` (Claude Desktop + `[tiers]`),
-  `docs/config-codex.md` (Codex via the `/v1/responses` edge),
+  (gateway `config.toml`, auth, pair, aliases, variants), `docs/config-cli.md`
+  (Claude Code CLI setup), `docs/config-desktop.md` (Claude Desktop + `[tiers]`),
   `docs/erros.md` (health/logs/troubleshooting), `docs/dev.md` (dev, CI,
   releases) and `docs/arquitetura.md` (layers, MVP limits). Keep them in sync
   when behavior changes, and preserve the top-of-file nav line and the

@@ -6,8 +6,7 @@
 //! binário `opencode` e sem rede.
 //!
 //! Arquivo autocontido de propósito: os testes de compatibilidade Claude em
-//! `tests/gateway.rs` e os da edge Codex em `tests/codex.rs` não são tocados
-//! por esta feature. Os helpers abaixo espelham os de `codex.rs`.
+//! `tests/gateway.rs` não são tocados por esta feature.
 
 use axum::{
     extract::State,
@@ -35,6 +34,7 @@ const ANTHROPIC_PKG: &str = "@opencode/ai/providers/anthropic";
 fn test_config() -> AppConfig {
     AppConfig {
         auth_token: TOKEN.to_string(),
+        opencode_pair: false,
         ..AppConfig::default()
     }
 }

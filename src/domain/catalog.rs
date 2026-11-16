@@ -45,8 +45,11 @@ pub struct CatalogSettings {
     #[serde(default)]
     pub provider: Option<String>,
     /// Wire API for the model, per the catalog (`settings.endpoint`).
-    /// `github-copilot` (aisdk package) mixes APIs: `"responses"` (GPT-6/5.6,
-    /// grok, mai-code, codex), `"chat"` (Gemini), `"messages"` (Claude).
+    /// Older `github-copilot` (aisdk) catalogs used this field to mix APIs
+    /// (`"responses"` for GPT/grok, `"chat"` for Gemini, `"messages"` for
+    /// Claude). v2.3 encodes the same split in the package name
+    /// (`*-responses` / `anthropic`), so this is kept only for compatibility
+    /// with pre-2.3 catalogs.
     #[serde(default)]
     pub endpoint: Option<String>,
 }

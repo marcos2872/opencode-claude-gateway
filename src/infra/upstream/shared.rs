@@ -55,33 +55,40 @@ pub(crate) fn cached_input_tokens(usage: Option<&Value>) -> u64 {
 // Anthropic -> OpenAI Chat Completions
 // ---------------------------------------------------------------------------
 
-pub(crate) fn image_part_to_openai(b: &Value) -> Option<Value> {
+/// The URL to send upstream for an Anthropic image block: a base64 `data:`
+/// URL for inline sources, the raw URL for `{"type":"url"}` sources.
+pub(crate) fn image_url(b: &Value) -> Option<String> {
     let src = b.get("source")?;
-    let mt = src
-        .get("media_type")
-        .and_then(Value::as_str)
-        .unwrap_or("image/jpeg");
-    let data = src.get("data").and_then(Value::as_str)?;
-    (!data.is_empty()).then(|| {
-        serde_json::json!({
-            "type": "image_url",
-            "image_url": {"url": format!("data:{mt};base64,{data}")}
-        })
-    })
+    match src.get("type").and_then(Value::as_str) {
+        Some("url") => src
+            .get("url")
+            .and_then(Value::as_str)
+            .filter(|u| !u.is_empty())
+            .map(str::to_string),
+        _ => {
+            let mt = src
+                .get("media_type")
+                .and_then(Value::as_str)
+                .unwrap_or("image/jpeg");
+            let data = src.get("data").and_then(Value::as_str)?;
+            (!data.is_empty()).then(|| format!("data:{mt};base64,{data}"))
+        }
+    }
+}
+
+pub(crate) fn image_part_to_openai(b: &Value) -> Option<Value> {
+    let url = image_url(b)?;
+    Some(serde_json::json!({
+        "type": "image_url",
+        "image_url": {"url": url}
+    }))
 }
 pub(crate) fn image_part_to_responses(b: &Value) -> Option<Value> {
-    let src = b.get("source")?;
-    let mt = src
-        .get("media_type")
-        .and_then(Value::as_str)
-        .unwrap_or("image/jpeg");
-    let data = src.get("data").and_then(Value::as_str)?;
-    (!data.is_empty()).then(|| {
-        serde_json::json!({
-            "type": "input_image",
-            "image_url": format!("data:{mt};base64,{data}")
-        })
-    })
+    let url = image_url(b)?;
+    Some(serde_json::json!({
+        "type": "input_image",
+        "image_url": url
+    }))
 }
 /// Split a `tool_result` into its text and the images nested in its content.
 ///
