@@ -1,0 +1,22 @@
+{
+  "name": "agent-usage",
+  "version": "0.1.0",
+  "description": "OpenCode Go quota (5h/weekly/monthly windows + console credits) in the Claude Code status line",
+  "author": { "name": "Marcos Brito" },
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "base_url": {
+      "type": "string",
+      "title": "Gateway URL",
+      "description": "Where ocg --serve listens. The mod polls <base_url>/usage.",
+      "default": "http://127.0.0.1:3737"
+    },
+    "auth_token": {
+      "type": "string",
+      "title": "Gateway token",
+      "description": "The gateway's auth_token from config.toml. Leave empty when the gateway accepts any credential on loopback.",
+      "default": ""
+    }
+  }
+}
