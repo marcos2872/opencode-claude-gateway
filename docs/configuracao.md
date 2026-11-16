@@ -164,6 +164,51 @@ Se `opencode_url` apontar para um servidor diferente do serviço selecionado
 (ex.: `opencode serve --standalone`), o CLI precisa da senha desse servidor:
 exporte `OPENCODE_PASSWORD` no ambiente do gateway antes de subir.
 
+## Cota do OpenCode Go (`GET /usage`)
+
+O gateway expõe a cota do plano Go no mesmo listener local, para um mod do
+Claude Code (ou a linha de status de qualquer cliente) acompanhá-la sem ler o
+`opencode.db` nem ver o token:
+
+```bash
+curl -s -H "x-api-key: $ANTHROPIC_AUTH_TOKEN" http://127.0.0.1:3737/usage
+```
+
+```json
+{
+  "provider": "opencode-go",
+  "windows": {
+    "rolling": {"percent": 5.0, "status": "ok", "resets_at": "2026-11-17T02:24:38.000Z"},
+    "weekly":  {"percent": 4.0, "status": "ok", "resets_at": "2026-11-23T00:00:00.000Z"},
+    "monthly": {"percent": 41.0, "status": "ok", "resets_at": "2026-12-02T19:04:41.000Z"}
+  },
+  "credits": {"available_micro_cents": 364914398, "limit_micro_cents": null},
+  "error": null,
+  "status": null,
+  "fetched_at": 1794872079
+}
+```
+
+- **Fonte:** `GET https://opencode.ai/zen/go/v1/usage` (janelas de 5 horas,
+  semanal e mensal) e `.../console/api/billing/status` (créditos pré-pagos,
+  melhor esforço). A credencial é a da integração `opencode` — a mesma que o
+  gateway já resolve pelo pareamento v2, com fallback no SQLite. Nenhum token
+  aparece na resposta nem no log.
+- **Cache:** 60 s no sucesso, 15 s no erro, compartilhado por todas as
+  chamadas. Uma linha de status pode consultar a cada minuto sem sobrecarregar
+  o console.
+- **Falhas não são erro HTTP:** a resposta é sempre `200`, com `error` e
+  `status` preenchidos e `windows`/`credits` nulos. Assim o cliente mantém o
+  último valor conhecido em vez de apagar a linha. Um `401` normalmente pede
+  `opencode auth login` de novo.
+- **Créditos:** o console responde `availableMicroCents` como **string** e a
+  unidade é 1e-8 de dólar (364914398 → US$ 3,65).
+- **Autenticação:** como toda rota, exige o `auth_token` do gateway em
+  `x-api-key` ou `Authorization: Bearer` quando ele está configurado.
+
+O mod de referência (linha de status do Claude Code) fica fora deste
+repositório; consulte o README dele para instalar.
+
 ## Escolhendo modelos — modelMap
 
 Você escolhe modelos dentro do Claude Code via `/model`, alimentado por

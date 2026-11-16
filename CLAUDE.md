@@ -5,10 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-cargo test                    # unit + integration tests (tests/gateway.rs, tests/pair.rs, tests/cache_usage.rs, tests/perf.rs)
+cargo test                    # unit + integration tests (tests/gateway.rs, tests/pair.rs, tests/cache_usage.rs, tests/usage.rs, tests/perf.rs)
 cargo test --test gateway     # only the e2e gateway tests (Claude-compat canary)
 cargo test --test pair        # only the OpenCode v2 pair + catalog/credential tests
 cargo test --test cache_usage # only prefix-cache usage reporting
+cargo test --test usage       # only `GET /usage` (OpenCode Go quota report)
 cargo test --test perf        # proxy translation latency (report-only in debug, enforced in release)
 cargo test <name>             # single test by name substring
 cargo llvm-cov --locked --all-targets --summary-only  # cobertura (requer llvm-tools-preview + cargo-llvm-cov)
@@ -125,10 +126,12 @@ Layers:
   `effective_default`, `resolve`, `bearer_for`), `api/forward.rs` (one
   `forward_*` per upstream wire protocol: `forward_anthropic`,
   `forward_openai`, `forward_responses`), `api/mock.rs`,
-  `api/count_tokens.rs`, `api/session.rs` (`session_headers`) and
+  `api/count_tokens.rs`, `api/session.rs` (`session_headers`),
   `api/errors.rs` (error shapes, `log_upstream_error`, `log_cache_usage`,
-  `request_summary`). New handler code usually belongs in a sibling module,
-  not in `server.rs`.
+  `request_summary`) and `api/usage.rs` (`GET /usage` — the OpenCode Go quota
+  report a Claude Code mod polls; 60 s cache, always 200 with an `error` row,
+  credential resolved like a forward's, token never leaves the process).
+  New handler code usually belongs in a sibling module, not in `server.rs`.
   The `body` flow: resolve model → pick forward by `protocol_for_entry`
   (catalog `settings.endpoint` can override the package for mixed
   `github-copilot` rows) → translate → merge catalog defaults → apply variant →
@@ -190,6 +193,13 @@ Layers:
   with Anthropic error types (`not_found_error`, `authentication_error`,
   `invalid_request_error`, `api_error`). A mid-stream upstream failure is an
   Anthropic `error` event and ends the stream — never `message_stop`.
+- **Quota report (`GET /usage`)**: answers the OpenCode Go windows (5h,
+  weekly, monthly) plus console credits from the `opencode` integration
+  credential, cached 60 s (15 s on error) and always `200` — failures ride in
+  `error`/`status` so a poller keeps its last value. `infra/quota.rs` does the
+  two GETs; `OCG_USAGE_URL`/`OCG_BILLING_URL` override them for tests. The
+  console sends `availableMicroCents` as a string, and a micro-cent is 1e-8 of
+  a dollar.
 - **Prefix-cache reporting**: the translated paths (Chat/Responses) surface the
   upstream's cached-input counter as `usage.cache_read_input_tokens` on the
   `/v1/messages` reply — only when `> 0`, so a miss keeps the exact old shape
@@ -209,8 +219,9 @@ Layers:
   `tests/gateway.rs` is the Claude-compat canary and stays Claude-only,
   `tests/pair.rs` covers the v2 pair flow + catalog/providers/credentials
   (shim `opencode` + a loopback v2 mock), `tests/cache_usage.rs` covers cache
-  reporting. A new feature gets its **own** test file (mirroring the helpers of
-  the file it is nearest to) instead of editing an existing one, so a
+  reporting, `tests/usage.rs` covers the `GET /usage` quota report. A new
+  feature gets its **own** test file (mirroring the helpers of the file it is
+  nearest to) instead of editing an existing one, so a
   regression is still measured exactly where it always was. All of them boot a
   seeded `AppState` over a mocked upstream on `127.0.0.1` — no real `opencode`
   binary and no network outside loopback.

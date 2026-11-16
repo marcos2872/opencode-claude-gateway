@@ -73,9 +73,16 @@ flowchart LR
     `count_tokens` (sem tokenizer).
   - `heartbeat.rs`: `with_heartbeat` — injeta `event: ping` durante o silêncio
     do upstream; `sse` / `sse_error` — frames Anthropic mid-stream.
+- **`infra/quota.rs`** — `QuotaProbe`: duas leituras GET com a credencial da
+  integração `opencode` (a mesma do pareamento) para `…/zen/go/v1/usage` e
+  `…/console/api/billing/status`, normalizadas para `windows` e `credits`.
+  Não levanta erro: devolve `Probe` com `error`/`status` para o handler.
+  URLs sobrescrevíveis por `OCG_USAGE_URL`/`OCG_BILLING_URL` (testes e debug).
 - **`api/server.rs`** — handlers Axum. Fluxo do body: resolve model → escolhe o
   forward por `protocol_for` → traduz → aplica variante → forward com o
   `Bearer` da credencial + headers de sessão (`x-opencode-session`, sempre enviado).
+  `api/usage.rs` serve `GET /usage` com cache de 60 s (15 s em erro) e sempre
+  `200`, para um mod do Claude Code não precisar ler o `opencode.db`.
 
 ## Convenções e pegadinhas
 
