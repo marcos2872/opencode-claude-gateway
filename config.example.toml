@@ -1,103 +1,79 @@
-# ports below are examples; use --port or OCG_PORT to change
+# opencode-claude-gateway — full example.
+#
+# This is a showcase, not the recommended starting point: the first run seeds
+# ~/.config/opencode-claude-gateway/config.toml with every key commented
+# (built-in defaults). Copy only the blocks you need.
+#
+# Model refs/aliases below are examples from the OpenCode catalog; list the
+# current ones with `ocg --refresh` or `curl -s http://127.0.0.1:3737/v1/models`.
+
+# ── basics ────────────────────────────────────────────────────────────────
 port = 3737
 
-# Token Claude Code sends (ANTHROPIC_AUTH_TOKEN). Empty = accept any (localhost only).
-# When set, all endpoints except /health require it (x-api-key or Authorization: Bearer).
+# Gateway credential Claude Code sends (ANTHROPIC_AUTH_TOKEN / x-api-key).
+# Empty = accept any on loopback. When set, everything except /health needs it.
 auth_token = ""
 
-# Used when the client omits "model". Defaults to the first alias if empty.
+# Used when the request omits "model". Empty = first alias alphabetically.
+# Tip: pick a real chat model, not a Copilot/fast row.
 default_model = "claude-opencode-go-kimi-k2-7-code"
 
-# OpenCode binary used for pairing, catalog and db-path discovery.
+# ── OpenCode v2 connection ────────────────────────────────────────────────
+# Binary used for pairing, catalog and db-path discovery.
 opencode_bin = "opencode"
 
-# Use the OpenCode v2 pair API (`POST /api/pair` + `/auth/connect/:code`) to
-# obtain a session token, then read the catalog/providers/credentials over
-# HTTP. Off falls back to `opencode api get /api/model` and the SQLite
-# credential table (offline/testing).
+# Pair with the selected service and read catalog/providers/credentials over
+# HTTP. false = offline fallback (CLI + SQLite credential table).
 opencode_pair = true
 
-# Explicit OpenCode v2 server URL. Empty = discover from the selected service
-# (state dir, then `opencode service status`).
+# Explicit v2 server URL. Empty = discover from the selected service.
 opencode_url = ""
 
-# Include Console free-tier (`opencode/*`) models in /v1/models.
-# They 403 outside OpenCode, so they are hidden by default.
+# ── catalog visibility ────────────────────────────────────────────────────
+# Console free-tier opencode/* models 403 outside OpenCode; hidden by default.
 include_free_tier = false
 
-# Dodge the Claude Desktop picker's bundled third-party-model denylist
-# (deepseek, kimi, gpt, ...): deepseek-v4.1-flash is advertised as
-# claude-opencode-go-d-eepseek-v4-1-flash so Desktop lists it.
-# Only the advertised id changes; refs and resolution are untouched.
-# Leave false for Claude Code (it lists every claude-* id already).
-desktop_aliases = true
+# Claude Desktop only: rewrite advertised ids around its third-party denylist.
+# Claude Code lists every claude-* id already; leave false unless you use Desktop.
+desktop_aliases = false
 
-# Answer Claude Code's auto-mode safety classifier (and its 1-token
-# liveness probes) locally instead of forwarding upstream. Those calls
-# use hardcoded first-party ids (claude-sonnet-5, claude-opus-4-8) that
-# resolve to whichever catalog row carries that model id; out of quota
-# they log a 429 WARN on every check. The gateway replies the "allow"
-# verdict itself (<severity>0</severity> / <block>no</block> / "ok") and
-# never touches the provider. Real conversations (tools + a real system
-# prompt) still forward normally.
-# Tradeoff: with the mock on, auto mode's LLM safety review always passes.
-mock_classifier = true
+# Claude Code CLI: rewrite family spelling (claude-sonnet -> cs, claude-opus -> co)
+# so background calls don't land on the Copilot rows. Recommended on.
+cli_shield_aliases = true
 
-# Anthropic family tiers advertised on /v1/models (anthropic_family_tier +
-# is_family_default). Key = gateway id or opencode ref (provider/model),
-# matched like [disabled] — prefer the ref, which survives the automatic
-# cli_shield_aliases / desktop_aliases renames below. Claude Desktop's
-# background calls (session titles, small_fast class) pick the first
-# discovered haiku, then sonnet, then opus — ignoring your chat model.
-# Without a tier it falls back to id substring matching and lands on the
-# first *sonnet* row (usually Copilot), burning its quota on every title
-# (max_tokens 200, no tools). Valid tiers: haiku, sonnet, opus, fable,
-# mythos. Unmapped aliases announce no tier.
-[tiers."opencode-go/muse-spark-1-3-contributor"]
-tier = "haiku"
-family_default = true
+# Answer Claude Code's auto-mode classifier and liveness probes locally.
+# Tradeoff: auto mode's LLM safety review always says "allow". Off by default.
+mock_classifier = false
 
-[tiers."opencode-go/deepseek-v4.1-flash"]
-tier = "sonnet"
-family_default = true
-
-[tiers."opencode-go/mimo-v2.6-flash"]
-tier = "opus"
-family_default = true
-#
-# [tiers."opencode-go/some-fable-model"]
-# tier = "fable"
-# family_default = true
-#
-# [tiers."opencode-go/some-mythos-model"]
-# tier = "mythos"
-# family_default = true
-
-# Upstream transport timeouts, in seconds.
-# connect_timeout_secs fails fast when a provider is unreachable.
-# request_timeout_secs bounds the whole request, streaming included, so it is
-# generous: a long reasoning turn can legitimately stay open for many minutes.
+# ── transport ─────────────────────────────────────────────────────────────
+# connect fails fast on an unreachable provider; request bounds the whole call,
+# streaming included, so it is generous by design.
 connect_timeout_secs = 30
 request_timeout_secs = 3600
 
-# Shield the Claude Code CLI's background-model resolution (on by default).
-# The CLI canonicalizes discovered ids by family substring
-# (claude-sonnet-*/claude-opus-*, plus haiku/fable/mythos for future rows)
-# and discards anthropic_family_tier, so any catalog row carrying that
-# spelling — today the github-copilot Claude rows, tomorrow any provider
-# shipping claude-* models — attracts side queries (title-gen etc.) that burn
-# quota. The gateway rewrites those fragments automatically, like
-# desktop_aliases: claude-github-copilot-claude-sonnet-5 is advertised as
-# claude-github-copilot-cs-5 (cs = copilot-sonnet, co = copilot-opus,
-# ch = copilot-haiku, cf/c/m for fable/mythos). Only the advertised id
-# changes; refs, display names and resolution are untouched, and [tiers]
-# keyed by opencode ref (provider/model) keep working across renames.
-# Set false to keep the historical claude-<provider>-<model> spelling (then
-# shield specific rows with manual [aliases] as before).
-cli_shield_aliases = true
+# ── optional: Anthropic family tiers (Claude Desktop background calls) ─────
+# Key = gateway id or provider/model ref (prefer the ref). Valid tiers:
+# haiku | sonnet | opus | fable | mythos. The Desktop's small_fast class picks
+# the first haiku, then sonnet, then opus. The Claude Code CLI ignores tiers.
+[tiers]
+# [tiers."opencode-go/muse-spark-1.3-contributor"]
+# tier = "haiku"
+# family_default = true
+#
+# [tiers."opencode-go/deepseek-v4.1-flash"]
+# tier = "sonnet"
+# family_default = true
 
+# ── optional: manual aliases ──────────────────────────────────────────────
+# Automatic aliases already cover every catalog row as
+# claude-<provider>-<model>. Use [aliases] only to override a name.
+[aliases]
+# [aliases."claude-my-model"]
+# opencode = "opencode-go/kimi-k2.7-code"
+# display_name = "Kimi (Go)"
+# description = "via ocg · opencode-go/kimi-k2.7-code"
 
-# Refs (gateway id or opencode ref) hidden from /v1/models.
+# ── optional: hide rows from /v1/models ───────────────────────────────────
 [disabled]
 models = [
   # "opencode-go/hy4-preview",
