@@ -392,6 +392,64 @@ mod tests {
         assert_eq!(msgs[3]["content"], "now summarize");
     }
     #[test]
+    fn tool_choice_any_and_tool_map_to_openai_forms() {
+        let body = serde_json::json!({
+            "model": "x",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{"name": "Read", "description": "d", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "any"},
+            "max_tokens": 5
+        });
+        assert_eq!(anthropic_to_openai(&body, "up")["tool_choice"], "required");
+        let mut forced = body.clone();
+        forced["tool_choice"] = serde_json::json!({"type": "tool", "name": "Read"});
+        assert_eq!(
+            anthropic_to_openai(&forced, "up")["tool_choice"],
+            serde_json::json!({"type": "function", "function": {"name": "Read"}})
+        );
+    }
+
+    #[test]
+    fn stop_sequences_map_to_stop() {
+        let body = serde_json::json!({
+            "model": "x",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stop_sequences": ["END", "STOP"],
+            "max_tokens": 5
+        });
+        assert_eq!(
+            anthropic_to_openai(&body, "up")["stop"],
+            serde_json::json!(["END", "STOP"])
+        );
+    }
+
+    #[test]
+    fn document_and_thinking_blocks_are_dropped() {
+        // Chat Completions has no portable document/thinking representation;
+        // dropping them is intentional (tested so it cannot silently change).
+        let body = serde_json::json!({
+            "model": "x",
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "text", "text": "see"},
+                    {"type": "document", "source": {
+                        "type": "base64", "media_type": "application/pdf", "data": "QUJD"
+                    }}
+                ]},
+                {"role": "assistant", "content": [
+                    {"type": "thinking", "thinking": "hmm", "signature": "sig"},
+                    {"type": "text", "text": "ok"}
+                ]}
+            ],
+            "max_tokens": 5
+        });
+        let out = anthropic_to_openai(&body, "up").to_string();
+        assert!(!out.contains("application/pdf"), "{out}");
+        assert!(!out.contains("document"), "{out}");
+        assert!(!out.contains("thinking"), "{out}");
+    }
+
+    #[test]
     fn content_filter_maps_to_refusal() {
         let resp = serde_json::json!({
             "choices": [{"finish_reason": "content_filter", "message": {"content": ""}}],

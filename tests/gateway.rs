@@ -317,6 +317,16 @@ struct MockUpstream {
     betas: Arc<Mutex<Vec<Option<String>>>>,
     org_ids: Arc<Mutex<Vec<Option<String>>>>,
     chat_streaming: bool,
+    /// Non-stream Chat reply carrying a tool call.
+    chat_tool_calls: bool,
+    /// Streaming Chat reply carrying a tool call split across chunks.
+    chat_tool_stream: bool,
+    /// Non-stream Responses reply carrying a function call.
+    responses_tool_call: bool,
+    /// Streaming Responses reply carrying a function call.
+    responses_tool_stream: bool,
+    /// Streaming Responses reply that fails before `response.completed`.
+    responses_failed_stream: bool,
     /// Answer /messages/count_tokens with 500 so the gateway falls back to
     /// the local estimate.
     count_tokens_fail: bool,
@@ -369,6 +379,21 @@ async fn mock_chat(
             .body(axum::body::Body::from_stream(s))
             .unwrap();
     }
+    if st.chat_tool_stream {
+        let sse = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",",
+            "\"function\":{\"name\":\"mcp__fs__read_file\",\"arguments\":\"{\\\"path\\\":\\\"\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,",
+            "\"function\":{\"arguments\":\"\\\"/a\\\"}\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],",
+            "\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        return Response::builder()
+            .header("content-type", "text/event-stream")
+            .body(axum::body::Body::from(sse))
+            .unwrap();
+    }
     if st.chat_streaming {
         let sse = concat!(
             "data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n",
@@ -381,6 +406,27 @@ async fn mock_chat(
             .header("content-type", "text/event-stream")
             .body(axum::body::Body::from(sse))
             .unwrap();
+    }
+    if st.chat_tool_calls {
+        return Json(json!({
+            "id": "chatcmpl-tool",
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "mcp__fs__read_file",
+                            "arguments": "{\"path\":\"/a\"}"
+                        }
+                    }]
+                }
+            }],
+            "usage": {"prompt_tokens": 9, "completion_tokens": 4}
+        }))
+        .into_response();
     }
     Json(json!({
         "id": "chatcmpl-test",
@@ -396,6 +442,49 @@ async fn mock_responses(
     Json(body): Json<Value>,
 ) -> Response {
     note(&st, &headers, "responses", body).await;
+    if st.responses_failed_stream {
+        let sse = concat!(
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,",
+            "\"item\":{\"type\":\"message\",\"content\":[]}}\n\n",
+            "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_fail\",",
+            "\"status\":\"failed\",\"error\":{\"message\":\"upstream exploded\"}}}\n\n",
+        );
+        return Response::builder()
+            .header("content-type", "text/event-stream")
+            .body(axum::body::Body::from(sse))
+            .unwrap();
+    }
+    if st.responses_tool_stream {
+        let sse = concat!(
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":1,",
+            "\"item\":{\"type\":\"function_call\",\"call_id\":\"call_1\",",
+            "\"name\":\"mcp__fs__read_file\"}}\n\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",",
+            "\"output_index\":1,\"delta\":\"{\\\"path\\\":\\\"/a\\\"}\"}\n\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,",
+            "\"item\":{\"type\":\"function_call\",\"call_id\":\"call_1\",",
+            "\"name\":\"mcp__fs__read_file\",\"arguments\":\"{\\\"path\\\":\\\"/a\\\"}\"}}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_tool\",",
+            "\"status\":\"completed\",\"usage\":{\"input_tokens\":9,\"output_tokens\":4}}}\n\n",
+        );
+        return Response::builder()
+            .header("content-type", "text/event-stream")
+            .body(axum::body::Body::from(sse))
+            .unwrap();
+    }
+    if st.responses_tool_call {
+        return Json(json!({
+            "id": "resp-tool",
+            "status": "completed",
+            "output": [
+                {"type": "message", "content": [{"type": "output_text", "text": ""}]},
+                {"type": "function_call", "call_id": "call_1",
+                 "name": "mcp__fs__read_file", "arguments": "{\"path\":\"/a\"}"}
+            ],
+            "usage": {"input_tokens": 9, "output_tokens": 4}
+        }))
+        .into_response();
+    }
     Json(json!({
         "id": "resp-test",
         "status": "completed",
@@ -495,6 +584,74 @@ fn msg_body_tools(model: &str) -> Value {
         "messages": [{"role": "user", "content": "hi"}],
         "tools": [{"name": "Read", "description": "d", "input_schema": {"type": "object"}}],
         "tool_choice": {"type": "none"}
+    })
+}
+
+/// A full tool-use turn: assistant `tool_use` followed by its result. Uses an
+/// MCP-style tool name on purpose (`mcp__server__tool`), since MCP tools are
+/// ordinary Anthropic tools to the gateway.
+fn tool_roundtrip_body(model: &str, stream: bool) -> Value {
+    json!({
+        "model": model,
+        "max_tokens": 64,
+        "stream": stream,
+        "tools": [{
+            "name": "mcp__fs__read_file",
+            "description": "read a file",
+            "input_schema": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"]
+            }
+        }],
+        "messages": [
+            {"role": "user", "content": "read /a"},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "reading"},
+                {"type": "tool_use", "id": "call_1",
+                 "name": "mcp__fs__read_file", "input": {"path": "/a"}}
+            ]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "call_1",
+                 "content": "file contents"}
+            ]}
+        ]
+    })
+}
+
+/// Images (base64 + URL), an image nested in a tool result, plus blocks the
+/// translated paths cannot represent (`document`, `thinking`).
+fn media_body(model: &str) -> Value {
+    json!({
+        "model": model,
+        "max_tokens": 64,
+        "messages": [
+            {"role": "user", "content": [
+                {"type": "text", "text": "look"},
+                {"type": "image", "source": {
+                    "type": "base64", "media_type": "image/png", "data": "QUJD"
+                }},
+                {"type": "image", "source": {
+                    "type": "url", "url": "https://example.com/a.png"
+                }},
+                {"type": "document", "source": {
+                    "type": "base64", "media_type": "application/pdf", "data": "QUJD"
+                }},
+                {"type": "thinking", "thinking": "hmm", "signature": "sig"}
+            ]},
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "t1", "name": "Read", "input": {}}
+            ]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "is_error": true,
+                 "content": [
+                    {"type": "text", "text": "boom"},
+                    {"type": "image", "source": {
+                        "type": "base64", "media_type": "image/jpeg", "data": "QUJD"
+                    }}
+                 ]}
+            ]}
+        ]
     })
 }
 
@@ -816,6 +973,355 @@ async fn e2e_tool_choice_none_reaches_upstream() {
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0]["tool_choice"], "none");
     assert_eq!(calls[0]["tools"][0]["function"]["name"], "Read");
+}
+
+#[tokio::test]
+async fn e2e_chat_tool_roundtrip_preserves_mcp_names() {
+    let mock = MockUpstream {
+        chat_tool_calls: true,
+        ..MockUpstream::default()
+    };
+    let base = spawn_mock(mock.clone()).await;
+    let state = seeded_state(
+        test_config(),
+        vec![mock_entry(&base, CHAT_PKG, "mock-chat")],
+        vec![alias("claude-mock-chat", "opencode/mock-chat")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let resp = server
+        .post("/v1/messages")
+        .add_header("x-api-key", "test-secret")
+        .json(&tool_roundtrip_body("claude-mock-chat", false))
+        .await;
+    assert_eq!(resp.status_code(), 200);
+    let body: Value = resp.json();
+    assert_eq!(body["stop_reason"], "tool_use");
+    let block = body["content"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["type"] == "tool_use")
+        .expect("tool_use block");
+    assert_eq!(block["name"], "mcp__fs__read_file");
+    assert_eq!(block["id"], "call_1");
+    assert_eq!(block["input"]["path"], "/a");
+
+    // Upstream saw a real assistant tool_calls turn plus the tool result, and
+    // the MCP name survived the function schema.
+    let calls = calls_to(&mock, "chat/completions").await;
+    let msgs = calls[0]["messages"].as_array().unwrap();
+    let asst = msgs
+        .iter()
+        .find(|m| m["tool_calls"].is_array())
+        .expect("assistant tool_calls");
+    assert_eq!(asst["tool_calls"][0]["id"], "call_1");
+    assert_eq!(
+        asst["tool_calls"][0]["function"]["name"],
+        "mcp__fs__read_file"
+    );
+    assert_eq!(
+        asst["tool_calls"][0]["function"]["arguments"],
+        "{\"path\":\"/a\"}"
+    );
+    let tool = msgs
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .expect("tool message");
+    assert_eq!(tool["tool_call_id"], "call_1");
+    assert_eq!(tool["content"], "file contents");
+    assert_eq!(
+        calls[0]["tools"][0]["function"]["name"],
+        "mcp__fs__read_file"
+    );
+}
+
+#[tokio::test]
+async fn e2e_chat_tool_streaming_emits_tool_use_blocks() {
+    let mock = MockUpstream {
+        chat_tool_stream: true,
+        ..MockUpstream::default()
+    };
+    let base = spawn_mock(mock.clone()).await;
+    let state = seeded_state(
+        test_config(),
+        vec![mock_entry(&base, CHAT_PKG, "mock-chat")],
+        vec![alias("claude-mock-chat", "opencode/mock-chat")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let resp = server
+        .post("/v1/messages")
+        .add_header("x-api-key", "test-secret")
+        .json(&tool_roundtrip_body("claude-mock-chat", true))
+        .await;
+    assert_eq!(resp.status_code(), 200);
+    let text = resp.text();
+    assert!(text.contains("message_start"), "{text}");
+    assert!(
+        text.contains("content_block_start") && text.contains("tool_use"),
+        "{text}"
+    );
+    assert!(text.contains("mcp__fs__read_file"), "{text}");
+    assert!(
+        text.contains("input_json_delta") && text.contains("path"),
+        "{text}"
+    );
+    assert!(text.contains("\"stop_reason\":\"tool_use\""), "{text}");
+    assert!(text.contains("message_stop"), "{text}");
+    // No fabricated visible text: the upstream only sent a tool call.
+    assert!(!text.contains("text_delta"), "{text}");
+}
+
+#[tokio::test]
+async fn e2e_responses_tool_roundtrip_preserves_mcp_names() {
+    let mock = MockUpstream {
+        responses_tool_call: true,
+        ..MockUpstream::default()
+    };
+    let base = spawn_mock(mock.clone()).await;
+    let state = seeded_state(
+        test_config(),
+        vec![mock_entry(&base, RESPONSES_PKG, "mock-resp")],
+        vec![alias("claude-mock-resp", "opencode/mock-resp")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let resp = server
+        .post("/v1/messages")
+        .add_header("x-api-key", "test-secret")
+        .json(&tool_roundtrip_body("claude-mock-resp", false))
+        .await;
+    assert_eq!(resp.status_code(), 200);
+    let body: Value = resp.json();
+    assert_eq!(body["stop_reason"], "tool_use");
+    let block = body["content"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["type"] == "tool_use")
+        .expect("tool_use block");
+    assert_eq!(block["name"], "mcp__fs__read_file");
+    assert_eq!(block["input"]["path"], "/a");
+
+    let calls = calls_to(&mock, "responses").await;
+    let input = calls[0]["input"].as_array().unwrap();
+    let fc = input
+        .iter()
+        .find(|i| i["type"] == "function_call")
+        .expect("function_call item");
+    assert_eq!(fc["call_id"], "call_1");
+    assert_eq!(fc["name"], "mcp__fs__read_file");
+    assert_eq!(fc["arguments"], "{\"path\":\"/a\"}");
+    let fco = input
+        .iter()
+        .find(|i| i["type"] == "function_call_output")
+        .expect("function_call_output item");
+    assert_eq!(fco["call_id"], "call_1");
+    assert_eq!(fco["output"], "file contents");
+    assert_eq!(calls[0]["tools"][0]["name"], "mcp__fs__read_file");
+}
+
+#[tokio::test]
+async fn e2e_responses_tool_streaming_emits_tool_use_blocks() {
+    let mock = MockUpstream {
+        responses_tool_stream: true,
+        ..MockUpstream::default()
+    };
+    let base = spawn_mock(mock.clone()).await;
+    let state = seeded_state(
+        test_config(),
+        vec![mock_entry(&base, RESPONSES_PKG, "mock-resp")],
+        vec![alias("claude-mock-resp", "opencode/mock-resp")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let resp = server
+        .post("/v1/messages")
+        .add_header("x-api-key", "test-secret")
+        .json(&tool_roundtrip_body("claude-mock-resp", true))
+        .await;
+    assert_eq!(resp.status_code(), 200);
+    let text = resp.text();
+    assert!(text.contains("message_start"), "{text}");
+    assert!(
+        text.contains("content_block_start") && text.contains("tool_use"),
+        "{text}"
+    );
+    assert!(text.contains("mcp__fs__read_file"), "{text}");
+    assert!(
+        text.contains("input_json_delta") && text.contains("path"),
+        "{text}"
+    );
+    assert!(text.contains("\"stop_reason\":\"tool_use\""), "{text}");
+    assert!(text.contains("message_stop"), "{text}");
+    assert!(!text.contains("text_delta"), "{text}");
+}
+
+#[tokio::test]
+async fn e2e_chat_media_keeps_images_and_drops_unsupported_blocks() {
+    let mock = MockUpstream::default();
+    let base = spawn_mock(mock.clone()).await;
+    let state = seeded_state(
+        test_config(),
+        vec![mock_entry(&base, CHAT_PKG, "mock-chat")],
+        vec![alias("claude-mock-chat", "opencode/mock-chat")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let resp = server
+        .post("/v1/messages")
+        .add_header("x-api-key", "test-secret")
+        .json(&media_body("claude-mock-chat"))
+        .await;
+    assert_eq!(resp.status_code(), 200);
+
+    let calls = calls_to(&mock, "chat/completions").await;
+    let raw = calls[0].to_string();
+    assert!(!raw.contains("application/pdf"), "{raw}");
+    assert!(!raw.contains("\"document\""), "{raw}");
+    assert!(!raw.contains("\"thinking\""), "{raw}");
+
+    let msgs = calls[0]["messages"].as_array().unwrap();
+    let user = msgs
+        .iter()
+        .find(|m| m["content"].is_array())
+        .expect("user content parts");
+    let parts = user["content"].as_array().unwrap();
+    assert!(parts
+        .iter()
+        .any(|p| p["image_url"]["url"] == "data:image/png;base64,QUJD"));
+    assert!(parts
+        .iter()
+        .any(|p| p["image_url"]["url"] == "https://example.com/a.png"));
+
+    let tool = msgs.iter().find(|m| m["role"] == "tool").unwrap();
+    assert_eq!(tool["content"], "Error: boom");
+    // The image nested in the tool_result follows as a user content part.
+    assert!(msgs.iter().any(|m| {
+        m["content"].as_array().is_some_and(|parts| {
+            parts
+                .iter()
+                .any(|p| p["image_url"]["url"] == "data:image/jpeg;base64,QUJD")
+        })
+    }));
+}
+
+#[tokio::test]
+async fn e2e_responses_media_keeps_images_and_drops_unsupported_blocks() {
+    let mock = MockUpstream::default();
+    let base = spawn_mock(mock.clone()).await;
+    let state = seeded_state(
+        test_config(),
+        vec![mock_entry(&base, RESPONSES_PKG, "mock-resp")],
+        vec![alias("claude-mock-resp", "opencode/mock-resp")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let resp = server
+        .post("/v1/messages")
+        .add_header("x-api-key", "test-secret")
+        .json(&media_body("claude-mock-resp"))
+        .await;
+    assert_eq!(resp.status_code(), 200);
+
+    let calls = calls_to(&mock, "responses").await;
+    let raw = calls[0].to_string();
+    assert!(!raw.contains("application/pdf"), "{raw}");
+    assert!(!raw.contains("\"document\""), "{raw}");
+    assert!(!raw.contains("\"thinking\""), "{raw}");
+
+    let input = calls[0]["input"].as_array().unwrap();
+    let has_image = |url: &str| {
+        input.iter().any(|i| {
+            i["content"]
+                .as_array()
+                .is_some_and(|parts| parts.iter().any(|p| p["image_url"] == url))
+        })
+    };
+    assert!(has_image("data:image/png;base64,QUJD"), "{raw}");
+    assert!(has_image("https://example.com/a.png"), "{raw}");
+    let fco = input
+        .iter()
+        .find(|i| i["type"] == "function_call_output")
+        .unwrap();
+    assert_eq!(fco["output"], "Error: boom");
+    assert!(has_image("data:image/jpeg;base64,QUJD"), "{raw}");
+}
+
+#[tokio::test]
+async fn e2e_anthropic_passthrough_preserves_documents_thinking_and_cache_control() {
+    let mock = MockUpstream::default();
+    let base = spawn_mock(mock.clone()).await;
+    let state = seeded_state(
+        test_config(),
+        vec![mock_entry(&base, ANTHROPIC_PKG, "mock-anth")],
+        vec![alias("claude-mock-anth", "opencode/mock-anth")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let body = json!({
+        "model": "claude-mock-anth",
+        "max_tokens": 64,
+        "system": [
+            {"type": "text", "text": "sys", "cache_control": {"type": "ephemeral"}}
+        ],
+        "messages": [
+            {"role": "user", "content": [
+                {"type": "text", "text": "see"},
+                {"type": "document", "source": {
+                    "type": "base64", "media_type": "application/pdf", "data": "QUJD"
+                }}
+            ]},
+            {"role": "assistant", "content": [
+                {"type": "thinking", "thinking": "hmm", "signature": "sig"},
+                {"type": "text", "text": "ok"}
+            ]},
+            {"role": "user", "content": "thanks"}
+        ]
+    });
+    let resp = server
+        .post("/v1/messages")
+        .add_header("x-api-key", "test-secret")
+        .json(&body)
+        .await;
+    assert_eq!(resp.status_code(), 200);
+    let calls = calls_to(&mock, "messages").await;
+    assert_eq!(calls[0]["model"], "mock-anth");
+    assert_eq!(calls[0]["system"][0]["cache_control"]["type"], "ephemeral");
+    assert_eq!(calls[0]["messages"][0]["content"][1]["type"], "document");
+    assert_eq!(calls[0]["messages"][1]["content"][0]["type"], "thinking");
+    assert_eq!(calls[0]["messages"][1]["content"][0]["signature"], "sig");
+}
+
+#[tokio::test]
+async fn e2e_responses_failed_stream_is_a_terminal_error() {
+    let mock = MockUpstream {
+        responses_failed_stream: true,
+        ..MockUpstream::default()
+    };
+    let base = spawn_mock(mock.clone()).await;
+    let state = seeded_state(
+        test_config(),
+        vec![mock_entry(&base, RESPONSES_PKG, "mock-resp")],
+        vec![alias("claude-mock-resp", "opencode/mock-resp")],
+    )
+    .await;
+    let server = axum_test::TestServer::new(router(state)).unwrap();
+    let mut body = msg_body("claude-mock-resp");
+    body["stream"] = Value::Bool(true);
+    let resp = server
+        .post("/v1/messages")
+        .add_header("x-api-key", "test-secret")
+        .json(&body)
+        .await;
+    assert_eq!(resp.status_code(), 200);
+    let text = resp.text();
+    assert!(text.contains("message_start"), "{text}");
+    assert!(text.contains("event: error"), "{text}");
+    assert!(text.contains("upstream exploded"), "{text}");
+    // A failed turn is not a completed one: no message_stop.
+    assert!(!text.contains("message_stop"), "{text}");
 }
 
 #[tokio::test]
@@ -1382,6 +1888,58 @@ async fn refresh_keeps_historical_spelling_when_shield_off() {
     assert!(
         ids.contains(&"claude-github-copilot-claude-sonnet-5"),
         "{ids:?}"
+    );
+}
+
+#[tokio::test]
+async fn refresh_hides_unsupported_packages() {
+    // Google's package speaks the native Generative Language API: no
+    // translator, so the row must stay out of the catalog instead of being
+    // forwarded to a Chat Completions endpoint that cannot understand it.
+    let dir = shim_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("opencode");
+    let body = json!({"data": [
+        {
+            "id": "gemini-4-hydrogen",
+            "modelID": "gemini-4-hydrogen",
+            "providerID": "opencode-go",
+            "name": "Gemini",
+            "package": "@opencode/ai/providers/google",
+            "enabled": true,
+            "variants": []
+        },
+        {
+            "id": "kimi-k2.7-code",
+            "modelID": "kimi-k2.7-code",
+            "providerID": "opencode-go",
+            "name": "Kimi",
+            "package": "@opencode/ai/providers/openai-compatible",
+            "enabled": true,
+            "variants": []
+        }
+    ]})
+    .to_string();
+    std::fs::write(&path, format!("#!/bin/sh\ncat <<'EOM'\n{body}\nEOM\n")).unwrap();
+    std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    let mut cfg = test_config();
+    cfg.opencode_bin = path.to_string_lossy().to_string();
+    let state = seeded_state(cfg, vec![], vec![]).await;
+    let n = state.refresh().await.expect("refresh");
+    assert_eq!(n, 1);
+    let aliases = state.aliases.read().await;
+    assert!(
+        aliases
+            .iter()
+            .any(|a| a.opencode_ref == "opencode-go/kimi-k2.7-code"),
+        "{aliases:?}"
+    );
+    assert!(
+        !aliases
+            .iter()
+            .any(|a| a.opencode_ref.contains("gemini-4-hydrogen")),
+        "{aliases:?}"
     );
 }
 

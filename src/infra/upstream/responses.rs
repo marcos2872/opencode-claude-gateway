@@ -368,6 +368,51 @@ mod tests {
         assert_eq!(a["usage"]["output_tokens"], 7);
     }
     #[test]
+    fn tool_choice_any_and_tool_map_to_responses_forms() {
+        let body = serde_json::json!({
+            "model": "x",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{"name": "Read", "description": "d", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "any"},
+            "max_tokens": 5
+        });
+        assert_eq!(
+            anthropic_to_responses(&body, "up")["tool_choice"],
+            "required"
+        );
+        let mut forced = body.clone();
+        forced["tool_choice"] = serde_json::json!({"type": "tool", "name": "Read"});
+        assert_eq!(
+            anthropic_to_responses(&forced, "up")["tool_choice"],
+            serde_json::json!({"type": "function", "name": "Read"})
+        );
+    }
+
+    #[test]
+    fn document_and_thinking_blocks_are_dropped() {
+        let body = serde_json::json!({
+            "model": "x",
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "text", "text": "see"},
+                    {"type": "document", "source": {
+                        "type": "base64", "media_type": "application/pdf", "data": "QUJD"
+                    }}
+                ]},
+                {"role": "assistant", "content": [
+                    {"type": "thinking", "thinking": "hmm", "signature": "sig"},
+                    {"type": "text", "text": "ok"}
+                ]}
+            ],
+            "max_tokens": 5
+        });
+        let out = anthropic_to_responses(&body, "up").to_string();
+        assert!(!out.contains("application/pdf"), "{out}");
+        assert!(!out.contains("document"), "{out}");
+        assert!(!out.contains("thinking"), "{out}");
+    }
+
+    #[test]
     fn url_image_survives_translation() {
         let body = serde_json::json!({
             "model": "x",

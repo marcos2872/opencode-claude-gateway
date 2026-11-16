@@ -20,13 +20,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// `base64("opencode:paired-token")`.
+/// `base64("opencode:paired-token")` / `base64("opencode:stale")`.
 const EXPECTED_BASIC: &str = "b3BlbmNvZGU6cGFpcmVkLXRva2Vu";
+const STALE_BASIC: &str = "b3BlbmNvZGU6c3RhbGU=";
+
+/// `OCG_PAIR_SESSION` is process-wide: serialize the tests that change it.
+static PAIR_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Clone, Default)]
 struct PairMock {
     auth: Arc<Mutex<Vec<Option<String>>>>,
     connect_codes: Arc<Mutex<Vec<String>>>,
+    providers_fail: bool,
+    catalog_fail: bool,
 }
 
 fn expected_basic() -> String {
@@ -58,24 +64,26 @@ async fn models(State(mock): State<PairMock>, headers: HeaderMap) -> Response {
         )
             .into_response();
     }
-    Json(json!({
-        "data": [{
-            "id": "kimi-k2.7-code",
-            "modelID": "kimi-k2.7-code",
-            "providerID": "opencode-go",
-            "name": "Kimi K2.7 Code",
-            "package": "@opencode/ai/providers/openai-compatible",
-            "settings": {"baseURL": "https://example.invalid/go/openai/v1"},
-            "enabled": true,
-            "variants": []
-        }]
-    }))
-    .into_response()
+    if mock.catalog_fail {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "catalog unavailable"})),
+        )
+            .into_response();
+    }
+    Json(catalog_entry_value()).into_response()
 }
 
 async fn providers(State(mock): State<PairMock>, headers: HeaderMap) -> Response {
     if !require_basic(&headers, &mock) {
         return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if mock.providers_fail {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "providers unavailable"})),
+        )
+            .into_response();
     }
     Json(json!({
         "data": [
@@ -103,7 +111,10 @@ async fn credentials(State(mock): State<PairMock>, headers: HeaderMap) -> Respon
 }
 
 async fn spawn_pair_server() -> (String, PairMock) {
-    let mock = PairMock::default();
+    spawn_pair_server_with(PairMock::default()).await
+}
+
+async fn spawn_pair_server_with(mock: PairMock) -> (String, PairMock) {
     let app = Router::new()
         .route("/auth/connect/:code", get(connect))
         .route("/api/model", get(models))
@@ -126,15 +137,62 @@ async fn spawn_pair_server() -> (String, PairMock) {
 
 /// Shim for `opencode api post /api/pair`: prints the pairing code.
 fn write_pair_shim(dir: &std::path::Path) -> String {
+    write_shim(dir, None)
+}
+
+/// Shim that also answers the offline catalog fallback
+/// (`opencode api get /api/model`) with `catalog`.
+fn write_pair_shim_with_catalog(dir: &std::path::Path, catalog: &Value) -> String {
+    write_shim(dir, Some(catalog))
+}
+
+fn write_shim(dir: &std::path::Path, catalog: Option<&Value>) -> String {
     std::fs::create_dir_all(dir).unwrap();
     let path = dir.join("opencode");
-    std::fs::write(
-        &path,
-        "#!/bin/sh\necho '{\"code\":\"pair-code-1\",\"expires_in\":300}'\n",
-    )
-    .unwrap();
+    let catalog_arm = match catalog {
+        Some(c) => format!("  *\"/api/model\"*) cat <<'EOM'\n{c}\nEOM\n    ;;\n"),
+        None => String::new(),
+    };
+    let script = format!(
+        "#!/bin/sh\n\
+         case \"$*\" in\n\
+         \x20 *\"/api/pair\"*) echo '{{\"code\":\"pair-code-1\",\"expires_in\":300}}' ;;\n\
+         {catalog_arm}\
+         \x20 *) exit 1 ;;\n\
+         esac\n"
+    );
+    std::fs::write(&path, script).unwrap();
     std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     path.to_string_lossy().to_string()
+}
+
+/// Serialize tests that mutate `OCG_PAIR_SESSION`, return the temp session
+/// path and a ready-to-use lock guard.
+async fn pair_session() -> (tokio::sync::MutexGuard<'static, ()>, PathBuf) {
+    let guard = PAIR_ENV_LOCK.lock().await;
+    let session = std::env::temp_dir().join(format!(
+        "ocg-pair-session-{}-{:?}.json",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_file(&session);
+    std::env::set_var("OCG_PAIR_SESSION", &session);
+    (guard, session)
+}
+
+fn catalog_entry_value() -> Value {
+    json!({
+        "data": [{
+            "id": "kimi-k2.7-code",
+            "modelID": "kimi-k2.7-code",
+            "providerID": "opencode-go",
+            "name": "Kimi K2.7 Code",
+            "package": "@opencode/ai/providers/openai-compatible",
+            "settings": {"baseURL": "https://example.invalid/go/openai/v1"},
+            "enabled": true,
+            "variants": []
+        }]
+    })
 }
 
 fn config(base: &str, bin: &str) -> AppConfig {
@@ -148,13 +206,7 @@ fn config(base: &str, bin: &str) -> AppConfig {
 
 #[tokio::test]
 async fn pair_flow_reads_catalog_providers_and_credentials() {
-    let session = std::env::temp_dir().join(format!(
-        "ocg-pair-session-{}-{:?}.json",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let _ = std::fs::remove_file(&session);
-    std::env::set_var("OCG_PAIR_SESSION", &session);
+    let (_env_guard, session) = pair_session().await;
 
     let (base, mock) = spawn_pair_server().await;
     let shim_dir = std::env::temp_dir().join(format!(
@@ -218,6 +270,122 @@ async fn pair_flow_reads_catalog_providers_and_credentials() {
         let mode = std::fs::metadata(&session).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "{}", session.display());
     }
+    let _ = std::fs::remove_file(&session);
+    let _ = std::fs::remove_dir_all(&shim_dir);
+}
+
+#[tokio::test]
+async fn stale_pair_token_is_renewed_on_401() {
+    let (_env_guard, session) = pair_session().await;
+    let (base, mock) = spawn_pair_server().await;
+    // Simulate a token that the server no longer accepts (expired/revoked).
+    std::fs::write(&session, json!({"url": base, "token": "stale"}).to_string()).unwrap();
+    let shim_dir = std::env::temp_dir().join(format!(
+        "ocg-pair-stale-shim-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let bin = write_pair_shim(&shim_dir);
+
+    let state = AppState::new(
+        config(&base, &bin),
+        PathBuf::from("/nonexistent-ocg-test/opencode.db"),
+    );
+    let n = state.refresh().await.expect("re-pair after 401");
+    assert_eq!(n, 1);
+
+    let auth = mock.auth.lock().await;
+    let stale = format!("Basic {STALE_BASIC}");
+    let expected = expected_basic();
+    assert!(
+        auth.iter().any(|a| a.as_deref() == Some(stale.as_str())),
+        "stale token was not tried first: {auth:?}"
+    );
+    assert!(
+        auth.iter().any(|a| a.as_deref() == Some(expected.as_str())),
+        "re-paired token was not used: {auth:?}"
+    );
+    drop(auth);
+    // One pairing code, one redemption: the 401 was recovered in place.
+    assert_eq!(mock.connect_codes.lock().await.len(), 1);
+    // The on-disk cache now holds the new token (not the stale one).
+    let cached: Value = serde_json::from_str(&std::fs::read_to_string(&session).unwrap()).unwrap();
+    assert_eq!(cached["token"], "paired-token");
+
+    let _ = std::fs::remove_file(&session);
+    let _ = std::fs::remove_dir_all(&shim_dir);
+}
+
+#[tokio::test]
+async fn provider_metadata_failure_falls_back_to_default_integration() {
+    let (_env_guard, session) = pair_session().await;
+    let (base, _mock) = spawn_pair_server_with(PairMock {
+        providers_fail: true,
+        ..PairMock::default()
+    })
+    .await;
+    let shim_dir = std::env::temp_dir().join(format!(
+        "ocg-pair-providers-shim-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let bin = write_pair_shim(&shim_dir);
+    let state = AppState::new(
+        config(&base, &bin),
+        PathBuf::from("/nonexistent-ocg-test/opencode.db"),
+    );
+    state.refresh().await.expect("catalog");
+
+    let entry = state
+        .catalog
+        .read()
+        .await
+        .iter()
+        .find(|e| e.qualified() == "opencode-go/kimi-k2.7-code")
+        .cloned()
+        .expect("catalog entry");
+    // `/api/provider` failed, so the static v2.3 mapping
+    // (opencode-go -> opencode) must still find the credential.
+    let bearer = state
+        .bearer_for(&entry)
+        .await
+        .expect("credential lookup")
+        .expect("credential present");
+    assert_eq!(bearer.expose_secret(), "paired-upstream-key");
+
+    let _ = std::fs::remove_file(&session);
+    let _ = std::fs::remove_dir_all(&shim_dir);
+}
+
+#[tokio::test]
+async fn pair_catalog_failure_falls_back_to_cli() {
+    let (_env_guard, session) = pair_session().await;
+    let (base, mock) = spawn_pair_server_with(PairMock {
+        catalog_fail: true,
+        ..PairMock::default()
+    })
+    .await;
+    let shim_dir = std::env::temp_dir().join(format!(
+        "ocg-pair-catalog-shim-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let bin = write_pair_shim_with_catalog(&shim_dir, &catalog_entry_value());
+    let state = AppState::new(
+        config(&base, &bin),
+        PathBuf::from("/nonexistent-ocg-test/opencode.db"),
+    );
+    let n = state.refresh().await.expect("CLI catalog fallback");
+    assert_eq!(n, 1);
+    assert!(state
+        .aliases
+        .read()
+        .await
+        .iter()
+        .any(|a| a.opencode_ref == "opencode-go/kimi-k2.7-code"));
+    // Pairing itself succeeded; only the catalog endpoint failed.
+    assert_eq!(mock.connect_codes.lock().await.len(), 1);
+
     let _ = std::fs::remove_file(&session);
     let _ = std::fs::remove_dir_all(&shim_dir);
 }
