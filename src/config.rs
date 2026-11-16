@@ -28,10 +28,20 @@ pub const CONFIG_TEMPLATE: &str = r#"# opencode-claude-gateway — config.toml (
 # (beware: that can be a Copilot row — pick your chat model here).
 # default_model = ""
 
-# OpenCode binary used for catalog + db-path discovery.
+# OpenCode binary used for pairing, catalog and db-path discovery.
 # opencode_bin = "opencode"
 
-# Include Console free-tier (`opencode/*`, public key) models in /v1/models.
+# Use the OpenCode v2 pair API (`POST /api/pair` plus `/auth/connect/:code`)
+# to obtain a session token, then read the catalog and provider credentials
+# over HTTP. On by default; set false to fall back to the CLI catalog fetch
+# and the SQLite credential table (offline/testing).
+# opencode_pair = true
+
+# OpenCode v2 server URL. Empty = discover from the selected service
+# (state dir / `opencode service status`). Usually not needed.
+# opencode_url = ""
+
+# Include Console free-tier (`opencode/*`) models in /v1/models.
 # They 403 outside OpenCode, so they are hidden by default.
 # include_free_tier = false
 
@@ -48,11 +58,6 @@ pub const CONFIG_TEMPLATE: &str = r#"# opencode-claude-gateway — config.toml (
 # Answer Claude Code's auto-mode safety-classifier checks (and its tiny
 # liveness probes) locally instead of forwarding upstream. Off by default.
 # mock_classifier = false
-
-# Serve POST /v1/responses (OpenAI Responses API edge, for Codex clients)
-# next to /v1/messages. On by default; set false to expose only the
-# Anthropic edge (Claude Code / Claude Desktop).
-# responses_endpoint = true
 
 # Upstream transport timeouts, in seconds. connect fails fast on an
 # unreachable provider; request bounds the whole call, streaming included.
@@ -144,11 +149,20 @@ pub struct AppConfig {
     pub auth_token: String,
     #[serde(default)]
     pub default_model: String,
-    /// OpenCode binary used for catalog + db-path discovery. The serde
-    /// default must match `Default::default()` (serde would otherwise give
-    /// `""`, breaking `resolve_db_path` for configs that omit the key).
+    /// OpenCode binary used for pairing, catalog and db-path discovery. The
+    /// serde default must match `Default::default()` (serde would otherwise
+    /// give `""`, breaking `resolve_db_path` for configs that omit the key).
     #[serde(default = "default_opencode_bin")]
     pub opencode_bin: String,
+    /// Use the OpenCode v2 pair API (`POST /api/pair` + `/auth/connect/:code`)
+    /// to obtain a session token for the catalog and credential endpoints.
+    /// Off falls back to the CLI catalog fetch + SQLite credential table.
+    #[serde(default = "default_true")]
+    pub opencode_pair: bool,
+    /// Explicit OpenCode v2 server URL. Empty = discover from the selected
+    /// service (state dir, then `opencode service status`).
+    #[serde(default)]
+    pub opencode_url: String,
     #[serde(default)]
     pub aliases: HashMap<String, AliasConfig>,
     #[serde(default)]
@@ -159,8 +173,8 @@ pub struct AppConfig {
     /// aliases announce no tier (current behavior, nothing breaks).
     #[serde(default)]
     pub tiers: HashMap<String, TierConfig>,
-    /// Include Console free-tier (`opencode/*`, public key) models.
-    /// They 403 outside OpenCode, so they are hidden by default.
+    /// Include Console free-tier (`opencode/*`) models. They 403 outside
+    /// OpenCode, so they are hidden by default.
     #[serde(default)]
     pub include_free_tier: bool,
     /// Rewrite auto-generated gateway ids to dodge the Claude Desktop
@@ -197,12 +211,6 @@ pub struct AppConfig {
     /// still forwarded normally.
     #[serde(default)]
     pub mock_classifier: bool,
-    /// Serve `POST /v1/responses` (OpenAI Responses API edge for Codex
-    /// clients) alongside `/v1/messages`. On by default; set false to
-    /// expose only the Anthropic edge. The Codex edge only forwards
-    /// Responses-upstream models (Fase 1 passthrough — see docs/config-codex.md).
-    #[serde(default = "default_true")]
-    pub responses_endpoint: bool,
     /// TCP/TLS connect timeout for the upstream request, in seconds.
     /// Short so an unreachable provider fails fast.
     #[serde(default = "default_connect_timeout_secs")]
@@ -241,6 +249,8 @@ impl Default for AppConfig {
             auth_token: String::new(),
             default_model: String::new(),
             opencode_bin: default_opencode_bin(),
+            opencode_pair: true,
+            opencode_url: String::new(),
             aliases: HashMap::new(),
             disabled: DisabledConfig::default(),
             tiers: HashMap::new(),
@@ -248,7 +258,6 @@ impl Default for AppConfig {
             desktop_aliases: false,
             cli_shield_aliases: true,
             mock_classifier: false,
-            responses_endpoint: true,
             connect_timeout_secs: default_connect_timeout_secs(),
             request_timeout_secs: default_request_timeout_secs(),
         }
@@ -460,6 +469,8 @@ tier = "sonnet"
             "# auth_token = ",
             "# default_model = ",
             "# opencode_bin = ",
+            "# opencode_pair = ",
+            "# opencode_url = ",
             "# include_free_tier = ",
             "# desktop_aliases = ",
             "# cli_shield_aliases = ",

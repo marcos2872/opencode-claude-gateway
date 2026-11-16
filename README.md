@@ -7,7 +7,7 @@
 Gateway local compatível com Anthropic que expõe seus **modelos do OpenCode** (v2) ao **Claude Code** — sem precisar de uma chave da Anthropic.
 
 - Escuta **apenas em `127.0.0.1`** e nunca fala com a API da Anthropic: o upstream é o backend Go/Console do OpenCode.
-- Reutiliza o **login do OpenCode** já existente na máquina (lê a credencial do SQLite, em memória).
+- Reutiliza o **login do OpenCode** já existente na máquina: pareia com o servidor v2 (`opencode pair`) e lê credenciais pela API, com fallback somente-leitura no SQLite.
 - Traduz Anthropic Messages ↔ upstream (passthrough Anthropic, OpenAI Chat Completions ou Responses API, conforme o modelo).
 - Roda como daemon em background com `--start` / `--status` / `--stop`; `--enable` / `--disable` ligam o auto-start no login (systemd user service).
 
@@ -22,8 +22,8 @@ ocg --enable   # auto-start no login (opcional)
 
 | Assunto | Implementação |
 |---|---|
-| Credenciais (OpenCode v2) | Leitura somente do SQLite `opencode.db`, tabela `credential` (envelope `{"type","key"}` desembrulhado em memória, nunca logado). Caminho via `opencode debug paths db`, senão `OPENCODE_DB` / `XDG_DATA_HOME`. `auth.json` serve só como entrada de migração legada. |
-| Catálogo de modelos | `opencode api get /api/model` (com service-auth), somente `enabled`. |
+| Pareamento (OpenCode v2) | `POST /api/pair` (via CLI autenticado) + `GET /auth/connect/:code` (Accept JSON) devolve um session token; toda chamada à API usa HTTP Basic `opencode:<token>`. O token é cacheado em `ocg.pair` (0600) e renovado em 401. |
+| Catálogo e credenciais | HTTP na API v2: `/api/model`, `/api/provider` (mapeia provider → integração) e `/api/credential`. Fallback offline: `opencode api get /api/model` e leitura somente do SQLite `opencode.db` (tabela `credential`, segredo só em memória). |
 | Modelos de pacote Anthropic (MiniMax, Qwen…) | Passthrough de bytes para `{baseURL}/messages` (`anthropic-version`/`anthropic-beta` repassados). |
 | Modelos OpenAI-compatible (Kimi, GLM, DeepSeek…) | Traduzidos para `{baseURL}/chat/completions` e de volta, incl. `tool_use`/`tool_result`, imagens, streaming SSE. |
 | Modelos Responses-API (linhas Go GPT/Grok/Muse) | Traduzidos para `{baseURL}/responses` e de volta, incl. function calls e streaming. |
@@ -62,7 +62,6 @@ precisar. Aponte seu cliente para o gateway:
 
 - **Claude Code (CLI):** [Configuração no CLI](docs/config-cli.md)
 - **Claude Desktop:** [Configuração no Desktop](docs/config-desktop.md)
-- **Codex (Desktop/CLI):** [Configuração no Codex](docs/config-codex.md)
 
 ### Migrando do `frank-opencode`
 
@@ -80,8 +79,8 @@ ocg --start
 
 ## Segurança
 
-- Só escuta em `127.0.0.1`. DB aberto em `READ_ONLY`. Segredos ficam só em memória (`secrecy`), nunca logados.
-- Arquivos de estado (`ocg.pid`, `ocg.port`, `ocg.session`, `ocg.log`) criados com `0600`.
+- Só escuta em `127.0.0.1`. O fallback de credenciais abre o SQLite em `READ_ONLY`; segredos ficam só em memória (`secrecy`), nunca logados.
+- Arquivos de estado (`ocg.pid`, `ocg.port`, `ocg.session`, `ocg.pair`, `ocg.log`) criados com `0600`.
 - Quando `auth_token` está setado, todo endpoint exceto `/health` o exige
   (`x-api-key` ou `Authorization: Bearer`) — veja
   [Configuração → auth_token](docs/configuracao.md#autenticação-do-gateway-auth_token).
@@ -96,10 +95,10 @@ pre-commit opcional. Como rodar em dev, testes, release e a suíte de latência:
 
 ## Documentação
 
+- [Landing page](https://marcos2872.github.io/opencode-claude-gateway/) — apresentação visual (deploy automático de `web/` via GitHub Pages).
 - [Configuração do gateway](docs/configuracao.md) — `config.toml`, auth, `default_model`, aliases, variantes.
 - [Configuração no Claude Code CLI](docs/config-cli.md) — env, `settings.json`, subagentes, blindagem do Copilot.
 - [Configuração no Claude Desktop](docs/config-desktop.md) — managed-settings, `desktop_aliases`, `[tiers]`.
-- [Configuração no Codex](docs/config-codex.md) — Responses API para o Codex (`POST /v1/responses`).
 - [Erros e diagnóstico](docs/erros.md) — `/health`, logs e tabela de sintomas.
 - [Desenvolvimento](docs/dev.md) — como rodar em dev, testes, lint, releases.
 - [Arquitetura](docs/arquitetura.md) — como o gateway é estruturado (domínio, infra, API).

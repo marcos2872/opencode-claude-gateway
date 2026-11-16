@@ -17,23 +17,35 @@ pub enum Protocol {
 pub fn protocol_for(package: &str) -> Protocol {
     if package.contains("anthropic") {
         Protocol::Anthropic
-    } else if package == "@opencode/ai/providers/openai" || package.contains("openai/responses") {
+    } else if package == "@opencode/ai/providers/openai" || package.contains("responses") {
+        // v2 packages: the bare `openai` package, `openai/responses`,
+        // `openai-compatible-responses` (github-copilot GPT rows) and any
+        // future `*-responses` variant.
         Protocol::Responses
     } else {
         Protocol::ChatCompletions
     }
 }
 
+/// Packages the gateway can translate today. Google's package speaks the
+/// native Generative Language API (`.../google/v1beta`), not Chat
+/// Completions, so those catalog rows are not advertised instead of being
+/// forwarded to an endpoint that cannot understand the body.
+pub fn is_supported_package(package: &str) -> bool {
+    !package.contains("google")
+}
+
 /// Wire protocol for a catalog entry, honoring the per-model
 /// `settings.endpoint` the catalog declares.
 ///
-/// `github-copilot` (aisdk package) mixes APIs on one baseURL: GPT-6/5.6,
-/// grok, mai-code and codex run on the Responses API (`endpoint: "responses"`),
-/// Gemini on Chat Completions (`"chat"`) and Claude on Messages (`"messages"`).
-/// Routing by package alone sends the Responses models to `/chat/completions`,
-/// which Copilot rejects with `400 ... not accessible via the /chat/completions
-/// endpoint`. For aisdk entries the declared endpoint decides; all other
-/// packages keep the `protocol_for(package)` table.
+/// Pre-2.3 `github-copilot` (aisdk package) catalogs mixed APIs under one
+/// baseURL: GPT/grok on the Responses API (`endpoint: "responses"`), Gemini on
+/// Chat Completions (`"chat"`) and Claude on Messages (`"messages"`). Routing
+/// by package alone sends the Responses models to `/chat/completions`, which
+/// Copilot rejects with `400 ... not accessible via the /chat/completions
+/// endpoint`. v2.3 encodes the split in the package
+/// (`openai-compatible-responses` / `anthropic`), so this branch only matters
+/// for old catalogs; all other packages keep the `protocol_for(package)` table.
 pub fn protocol_for_entry(entry: &CatalogEntry) -> Protocol {
     if entry.package.contains("aisdk") {
         return match entry.settings.endpoint.as_deref() {
@@ -50,9 +62,10 @@ pub fn protocol_for_entry(entry: &CatalogEntry) -> Protocol {
 /// caller can `warn!` (include provider_id + package). The gateway still
 /// routes it via the ChatCompletions fallback.
 pub fn is_known_package(package: &str) -> bool {
-    const KNOWN: [&str; 12] = [
+    const KNOWN: [&str; 14] = [
         "anthropic",
         "openai",
+        "responses",
         "openrouter",
         "google",
         "vertex",
@@ -63,6 +76,7 @@ pub fn is_known_package(package: &str) -> bool {
         "lmstudio",
         "vllm",
         "copilot",
+        "mistral",
     ];
     KNOWN.iter().any(|k| package.contains(k))
 }
@@ -86,6 +100,11 @@ mod tests {
             protocol_for("@opencode/ai/providers/openai/responses"),
             Responses
         );
+        // v2 spells the Copilot GPT rows `openai-compatible-responses`.
+        assert_eq!(
+            protocol_for("@opencode/ai/providers/openai-compatible-responses"),
+            Responses
+        );
         assert_eq!(
             protocol_for("@opencode/ai/providers/openai-compatible"),
             ChatCompletions
@@ -97,6 +116,19 @@ mod tests {
         assert!(is_known_package("@opencode/ai/providers/openrouter"));
         assert!(!is_known_package("@acme/custom-thing"));
         assert_eq!(protocol_for("@acme/custom-thing"), ChatCompletions);
+    }
+
+    #[test]
+    fn google_package_is_known_but_unsupported() {
+        let pkg = "@opencode/ai/providers/google";
+        assert!(is_known_package(pkg));
+        // It would otherwise be routed to Chat Completions against a
+        // Generative Language base URL, which cannot work.
+        assert!(!is_supported_package(pkg));
+        assert!(is_supported_package("@opencode/ai/providers/mistral"));
+        assert!(is_supported_package(
+            "@opencode/ai/providers/openai-compatible-responses"
+        ));
     }
 
     /// The github-copilot aisdk package mixes APIs under one baseURL; the

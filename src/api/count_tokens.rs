@@ -7,7 +7,6 @@ use super::forward::{
 };
 use super::state::AppState;
 use crate::domain::{protocol_for_entry, strip_window_suffix, CatalogEntry, Protocol};
-use crate::infra::opencode::{upstream_bearer, CredentialStore};
 use crate::infra::upstream::{apply_variant_checked, estimate_tokens, join_url};
 use axum::{
     extract::State,
@@ -82,15 +81,14 @@ async fn proxy_count_tokens(
     body: &Value,
     variant: Option<&str>,
 ) -> Option<u64> {
-    let store = CredentialStore::new(s.db_path.clone());
-    let bearer = upstream_bearer(entry, &store)?;
+    let bearer = s.bearer_for(entry).await.ok()?;
     let mut req_body = body.clone();
     // The upstream counts under its own model id, not the gateway alias.
     req_body["model"] = Value::String(entry.model_id.clone());
     let url = join_url(base, "messages/count_tokens");
     // Client-only `anthropic-beta` here (no catalog merge: unlike the
     // Messages forward, the count proxy never merges fast-mode betas).
-    let mut req = upstream_post(s, &url, &bearer).header(
+    let mut req = upstream_post(s, &url, bearer.as_ref()).header(
         "anthropic-version",
         headers
             .get("anthropic-version")

@@ -1,7 +1,7 @@
 //! Anthropic <-> OpenAI Chat Completions translation.
 
 use super::shared::{
-    block_text, cached_input_tokens, floor_output_tokens, parse_args, tool_result_parts,
+    block_text, cached_input_tokens, floor_output_tokens, image_url, parse_args, tool_result_parts,
 };
 use serde_json::Value;
 
@@ -50,19 +50,11 @@ pub fn anthropic_to_openai(body: &Value, upstream_model: &str) -> Value {
                                 }
                             }
                             Some("image") => {
-                                if let Some(src) = b.get("source") {
-                                    let mt = src
-                                        .get("media_type")
-                                        .and_then(|x| x.as_str())
-                                        .unwrap_or("image/jpeg");
-                                    let data =
-                                        src.get("data").and_then(|x| x.as_str()).unwrap_or("");
-                                    if !data.is_empty() {
-                                        images.push(serde_json::json!({
-                                            "type": "image_url",
-                                            "image_url": {"url": format!("data:{mt};base64,{data}")}
-                                        }));
-                                    }
+                                if let Some(url) = image_url(b) {
+                                    images.push(serde_json::json!({
+                                        "type": "image_url",
+                                        "image_url": {"url": url}
+                                    }));
                                 }
                             }
                             Some("tool_use") => {
@@ -311,6 +303,9 @@ pub fn openai_to_anthropic(resp: &Value, gateway_model: &str) -> Value {
         match finish {
             "length" => "max_tokens",
             "tool_calls" => "tool_use",
+            // Anthropic's standard refusal stop reason; OpenAI-compatible
+            // upstreams report it as a content-filter finish.
+            "content_filter" => "refusal",
             _ => "end_turn",
         }
     };
@@ -396,6 +391,89 @@ mod tests {
         assert_eq!(msgs[2]["tool_call_id"], "t1");
         assert_eq!(msgs[3]["content"], "now summarize");
     }
+    #[test]
+    fn tool_choice_any_and_tool_map_to_openai_forms() {
+        let body = serde_json::json!({
+            "model": "x",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{"name": "Read", "description": "d", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "any"},
+            "max_tokens": 5
+        });
+        assert_eq!(anthropic_to_openai(&body, "up")["tool_choice"], "required");
+        let mut forced = body.clone();
+        forced["tool_choice"] = serde_json::json!({"type": "tool", "name": "Read"});
+        assert_eq!(
+            anthropic_to_openai(&forced, "up")["tool_choice"],
+            serde_json::json!({"type": "function", "function": {"name": "Read"}})
+        );
+    }
+
+    #[test]
+    fn stop_sequences_map_to_stop() {
+        let body = serde_json::json!({
+            "model": "x",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stop_sequences": ["END", "STOP"],
+            "max_tokens": 5
+        });
+        assert_eq!(
+            anthropic_to_openai(&body, "up")["stop"],
+            serde_json::json!(["END", "STOP"])
+        );
+    }
+
+    #[test]
+    fn document_and_thinking_blocks_are_dropped() {
+        // Chat Completions has no portable document/thinking representation;
+        // dropping them is intentional (tested so it cannot silently change).
+        let body = serde_json::json!({
+            "model": "x",
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "text", "text": "see"},
+                    {"type": "document", "source": {
+                        "type": "base64", "media_type": "application/pdf", "data": "QUJD"
+                    }}
+                ]},
+                {"role": "assistant", "content": [
+                    {"type": "thinking", "thinking": "hmm", "signature": "sig"},
+                    {"type": "text", "text": "ok"}
+                ]}
+            ],
+            "max_tokens": 5
+        });
+        let out = anthropic_to_openai(&body, "up").to_string();
+        assert!(!out.contains("application/pdf"), "{out}");
+        assert!(!out.contains("document"), "{out}");
+        assert!(!out.contains("thinking"), "{out}");
+    }
+
+    #[test]
+    fn content_filter_maps_to_refusal() {
+        let resp = serde_json::json!({
+            "choices": [{"finish_reason": "content_filter", "message": {"content": ""}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 0}
+        });
+        assert_eq!(openai_to_anthropic(&resp, "gw")["stop_reason"], "refusal");
+    }
+
+    #[test]
+    fn url_image_survives_translation() {
+        let body = serde_json::json!({
+            "model": "x",
+            "messages": [{"role": "user", "content": [
+                {"type": "image", "source": {"type": "url", "url": "https://example.com/a.png"}}
+            ]}],
+            "max_tokens": 10
+        });
+        let oai = anthropic_to_openai(&body, "up");
+        assert_eq!(
+            oai["messages"][0]["content"][0]["image_url"]["url"],
+            "https://example.com/a.png"
+        );
+    }
+
     #[test]
     fn converts_openai_response_with_tools() {
         let resp = serde_json::json!({

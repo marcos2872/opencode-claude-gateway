@@ -5,9 +5,11 @@
 
 use crate::config::AppConfig;
 use crate::domain::{
-    auto_aliases_for, is_known_package, AliasEntry, AliasOptions, CatalogEntry, ModelRef,
+    auto_aliases_for, is_known_package, is_supported_package, AliasEntry, AliasOptions,
+    CatalogEntry, ModelRef,
 };
-use crate::infra::opencode::fetch_catalog;
+use crate::infra::pair::{OpenCodeClient, SharedOpenCode};
+use secrecy::SecretString;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -28,11 +30,13 @@ pub struct AppState {
     pub last_refresh: Arc<RwLock<Option<SystemTime>>>,
     pub last_error: Arc<RwLock<Option<String>>>,
     pub http: reqwest::Client,
-    pub db_path: PathBuf,
+    /// OpenCode v2 HTTP client (pair session, catalog, credentials).
+    pub opencode: SharedOpenCode,
 }
 
 impl AppState {
     pub fn new(config: AppConfig, db_path: PathBuf) -> Self {
+        let opencode = Arc::new(OpenCodeClient::new(&config, db_path));
         let http = reqwest::Client::builder()
             // Connect/headers budget is short (fail fast on an unreachable
             // provider); the total timeout is generous because it also bounds
@@ -50,8 +54,14 @@ impl AppState {
             last_refresh: Arc::new(RwLock::new(None)),
             last_error: Arc::new(RwLock::new(None)),
             http,
-            db_path,
+            opencode,
         }
+    }
+
+    /// Upstream bearer for a catalog entry (inline key, pair credential or
+    /// SQLite fallback). `Ok(None)` means the provider needs no auth.
+    pub async fn bearer_for(&self, entry: &CatalogEntry) -> Result<Option<SecretString>, String> {
+        self.opencode.bearer_for(entry).await
     }
 
     /// Rebuild catalog + alias map. Manual aliases win; disabled are skipped.
@@ -59,33 +69,39 @@ impl AppState {
     /// `include_free_tier` is set: they 403 outside OpenCode.
     /// Failures keep the previous catalog and are recorded for `/health`.
     pub async fn refresh(&self) -> Result<usize, String> {
-        let bin = self.config.opencode_bin.clone();
-        let fetch = tokio::task::spawn_blocking(move || fetch_catalog(&bin));
-        let entries = match tokio::time::timeout(Duration::from_secs(20), fetch).await {
-            Ok(Ok(Ok(entries))) => entries,
-            Ok(Ok(Err(e))) => {
-                let msg = format!("catalog fetch failed: {e}");
-                *self.last_error.write().await = Some(msg.clone());
-                return Err(msg);
-            }
-            Ok(Err(e)) => {
-                let msg = format!("catalog task failed: {e}");
-                *self.last_error.write().await = Some(msg.clone());
-                return Err(msg);
-            }
-            Err(_) => {
-                let msg = "catalog fetch timed out after 20s".to_string();
-                *self.last_error.write().await = Some(msg.clone());
-                return Err(msg);
-            }
-        };
-        for e in &entries {
+        let entries =
+            match tokio::time::timeout(Duration::from_secs(20), self.opencode.catalog()).await {
+                Ok(Ok(entries)) => entries,
+                Ok(Err(e)) => {
+                    let msg = format!("catalog fetch failed: {e}");
+                    *self.last_error.write().await = Some(msg.clone());
+                    return Err(msg);
+                }
+                Err(_) => {
+                    let msg = "catalog fetch timed out after 20s".to_string();
+                    *self.last_error.write().await = Some(msg.clone());
+                    return Err(msg);
+                }
+            };
+        let mut supported: Vec<CatalogEntry> = Vec::with_capacity(entries.len());
+        let mut hidden_unsupported = 0usize;
+        for e in entries {
             tracing::debug!(
                 provider_id = %e.provider_id,
                 model_id = %e.model_id,
                 package = %e.package,
                 "catalog entry"
             );
+            if !is_supported_package(&e.package) {
+                tracing::debug!(
+                    provider_id = %e.provider_id,
+                    model_id = %e.model_id,
+                    package = %e.package,
+                    "unsupported provider package, model hidden (no wire translator)"
+                );
+                hidden_unsupported += 1;
+                continue;
+            }
             if !is_known_package(&e.package) {
                 tracing::warn!(
                     provider_id = %e.provider_id,
@@ -93,7 +109,15 @@ impl AppState {
                     "unknown provider package, using ChatCompletions fallback"
                 );
             }
+            supported.push(e);
         }
+        if hidden_unsupported > 0 {
+            tracing::warn!(
+                models = hidden_unsupported,
+                "unsupported provider packages hidden (google/native wire protocols have no translator)"
+            );
+        }
+        let entries = supported;
         let usable: Vec<&CatalogEntry> = entries
             .iter()
             .filter(|e| self.config.include_free_tier || e.provider_id != "opencode")
@@ -279,43 +303,6 @@ impl AppState {
         };
         let hit = self.lookup_entry(&base).await;
         self.finish_resolve(hit, &base, variant).await
-    }
-
-    /// Codex edge (`POST /v1/responses`): a model id that is neither a
-    /// gateway alias nor an explicit `provider/model` ref falls back to the
-    /// configured `default_model`. Codex sends its own bundled slugs (e.g.
-    /// `gpt-6-luna`) for background threads; plain-id matching would
-    /// fuzzy-resolve them to an arbitrary catalog row (github-copilot first)
-    /// and burn Copilot quota on a model the user never picked. An empty
-    /// `default_model` keeps the old path (unknown ids still 404).
-    pub(crate) async fn codex_model_or_default(&self, requested: &str) -> String {
-        let base = match requested.split_once('#') {
-            Some((b, _)) => b,
-            None => requested,
-        };
-        // Explicit `provider/model` refs stay authoritative, and so does the
-        // configured default itself (no self-fallback warn).
-        if base.contains('/') || requested == self.config.default_model {
-            return requested.to_string();
-        }
-        if self.config.default_model.is_empty() {
-            return requested.to_string();
-        }
-        let is_alias = self
-            .aliases
-            .read()
-            .await
-            .iter()
-            .any(|a| a.gateway_id == base);
-        if is_alias {
-            return requested.to_string();
-        }
-        tracing::warn!(
-            model = %requested,
-            fallback = %self.config.default_model,
-            "codex edge: model not in gateway catalog, using default_model"
-        );
-        self.config.default_model.clone()
     }
 
     /// Catalog lookup under the read guards (kept out of `resolve` so the

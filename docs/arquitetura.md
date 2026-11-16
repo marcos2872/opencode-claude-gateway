@@ -1,7 +1,7 @@
 # Arquitetura
 
 [← README](../README.md) · [Configuração](configuracao.md) · [CLI](config-cli.md) ·
-[Desktop](config-desktop.md) · [Codex](config-codex.md) · [Erros](erros.md) · [Dev](dev.md) ·
+[Desktop](config-desktop.md) · [Erros](erros.md) · [Dev](dev.md) ·
 **Arquitetura**
 
 `opencode-claude-gateway` é um gateway local compatível com Anthropic que expõe os
@@ -9,30 +9,33 @@ modelos do OpenCode v2 ao Claude Code. Escuta apenas em `127.0.0.1` e **nunca**
 fala com a Anthropic — o upstream é o backend Go/Console do OpenCode, roteado
 pelo pacote (provider).
 
-Há duas bordas de cliente: `POST /v1/messages` (dialecto Anthropic — Claude
-Code e Claude Desktop) e `POST /v1/responses` (dialecto OpenAI Responses —
-Codex; passthrough byte-a-byte para upstreams Responses + tradução canônica
-Anthropic para upstreams Chat/Anthropic, com garra de evento terminal e erros
-em shape OpenAI, ligada por `responses_endpoint`, default on — mais o
-catálogo `GET /v1/models/codex` para o picker do Codex).
+Há uma única borda de cliente: `POST /v1/messages` (dialecto Anthropic —
+Claude Code e Claude Desktop). O gateway fala com o OpenCode v2 pelo fluxo de
+pareamento (`POST /api/pair` + `/auth/connect/:code`), obtendo um session
+token para ler catálogo, providers e credenciais em `/api/model`,
+`/api/provider` e `/api/credential`; o fallback offline é o CLI
+(`opencode api get /api/model`) + SQLite somente-leitura.
 
 ```mermaid
 flowchart LR
-    CC["Claude Code"]
+    CC["Claude Code / Desktop"]
     GW["ocg<br/>(127.0.0.1:3737)"]
-    UP["OpenCode Go backend"]
-    DB[("SQLite<br/>(credential)")]
+    OC["OpenCode v2 server"]
+    UP["Provider upstream"]
+    DB[("SQLite<br/>(fallback)")]
 
     CC -->|"Anthropic Messages"| GW
+    GW -->|"pair session (Basic)<br/>catálogo · providers · credenciais"| OC
     GW -->|"resolve model → protocol_for → traduz → aplica variante"| UP
-    UP -.->|"credencial (só-leitura)"| DB
+    GW -.->|"fallback: CLI + SQLite read-only"| DB
 ```
 
 ## Camadas
 
 - **`domain/`** — tipos e regras puras, sem async (`mod.rs` só re-exporta).
   `model.rs` (`ModelRef`: provider/model, sufixo `#variant`), `catalog.rs`
-  (`CatalogEntry` deserializa a saída de `opencode api get /api/model`, incl.
+  (`CatalogEntry` deserializa `/api/model` — ou o fallback
+  `opencode api get /api/model` — incl.
   `variants`, headers/body por modelo, limites de contexto e linhas de `id`
   distintas), `protocol.rs` (`protocol_for_entry` → protocolo de wire, incl.
   `settings.endpoint` para catálogos mistos `github-copilot`), `alias.rs`
@@ -44,10 +47,13 @@ flowchart LR
   chamadas de fundo do CLI não caírem nessas linhas; reescrita opt-in
   `desktop_aliases` para a denylist do Desktop; `strip_window_suffix` para os
   hints `[1m]`/`[200k]` que o Claude Code anexa a ids desconhecidos).
-- **`infra/opencode.rs`** — estado do OpenCode. Credenciais **somente** da tabela
-  `credential` da SQLite (read-only; `auth.json` nunca é fonte de verdade; nunca
-  parseia `opencode.jsonc`). Catálogo via `opencode api get /api/model`. Caminho
-  do DB via `opencode debug paths db`.
+- **`infra/pair.rs`** — cliente da API v2. Faz `POST /api/pair` pelo CLI
+  autenticado, troca o código por um session token em `/auth/connect/:code`
+  (`Accept: application/json`) e usa HTTP Basic `opencode:<token>`. Cacheia o
+  token em `ocg.pair` (0600), renova em 401 e lê `/api/model`, `/api/provider`
+  (provider → `integrationID`) e `/api/credential`. Fallback offline:
+  `infra/opencode.rs` (CLI para o catálogo; SQLite read-only para credenciais;
+  `auth.json` nunca é fonte de verdade; nunca parseia `opencode.jsonc`).
 - **`infra/upstream/`** — tradutores puros (sem HTTP; `upstream.rs` re-exporta
   a superfície pública mais `join_url`):
   - `chat.rs`: `anthropic_to_openai` / `openai_to_anthropic` (Chat Completions)
@@ -77,8 +83,14 @@ flowchart LR
   simples (ids ambíguos ordenam por nome qualificado, com aviso). Variantes são
   validadas contra o catálogo; label desconhecido → 404 listando as disponíveis.
 - **Free-tier**: modelos `opencode/*` dão 403 fora do OpenCode, então ficam
-  ocultos de `/v1/models` a menos que `include_free_tier = true`. Usam a chave
-  pública de `settings.apiKey` (`upstream_bearer`).
+  ocultos de `/v1/models` a menos que `include_free_tier = true`. Desde a v2.3
+  a integração `opencode` tem credencial OAuth própria (usada também pelos
+  modelos `opencode-go/*`); a chave pública de `settings.apiKey`/`public`
+  permanece só como fallback legado.
+- **Pacotes suportados**: Anthropic, Chat Completions, Responses API e
+  OpenAI-compatible (incl. Mistral, cujo base URL é OpenAI-compatible). O
+  pacote `@opencode/ai/providers/google` fala a Generative Language API nativa
+  e é **ocultado** do catálogo (não há tradutor), com WARN no boot.
 - **Headers de sessão**: o forward para o Go sempre envia `x-opencode-session`
   (o `x-claude-code-session-id` do cliente, depois `x-opencode-session`, senão um
   fallback persistido em `ocg.session`).

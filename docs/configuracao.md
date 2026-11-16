@@ -1,7 +1,7 @@
 # Configuração do gateway
 
 [← README](../README.md) · **Configuração** · [CLI](config-cli.md) ·
-[Desktop](config-desktop.md) · [Codex](config-codex.md) · [Erros](erros.md) · [Dev](dev.md) ·
+[Desktop](config-desktop.md) · [Erros](erros.md) · [Dev](dev.md) ·
 [Arquitetura](arquitetura.md)
 
 Referência das opções do `config.toml`, dos overrides por variável de ambiente e de
@@ -135,16 +135,34 @@ continuam encaminhadas normalmente, inclusive no modelo do Copilot selecionado.
 > sem `tools`) usam outro prompt e passam direto — para essas, use os tiers
 > em [Configuração do Desktop](config-desktop.md#tiers-da-família-anthropic), não o mock.
 
-## Edge do Codex (`responses_endpoint`)
+## Pareamento com o OpenCode v2 (`opencode_pair`)
 
-Além de `POST /v1/messages` (Claude Code / Claude Desktop), o gateway serve
-`POST /v1/responses` (dialecto **OpenAI Responses API**, o único que o Codex
-fala) e `GET /v1/models/codex` (catálogo nativo para o picker do Codex). A
-chave `responses_endpoint` (default `true`) liga/desliga as duas rotas — com
-`false` o gateway volta a ser exclusivamente Anthropic. Modelos de upstream
-Responses usam passthrough; Chat/Anthropic passam pela tradução canônica
-(Fase 2). Setup completo do cliente em
-[Configuração no Codex](config-codex.md).
+Por padrão o gateway pareia com o servidor OpenCode v2 selecionado
+(`POST /api/pair` pelo CLI já autenticado, seguido de
+`GET /auth/connect/:code` com `Accept: application/json`). O session token
+resultante autentica as chamadas de catálogo, providers e credenciais com HTTP
+Basic `opencode:<token>` e fica cacheado em
+`~/.local/share/opencode-claude-gateway/ocg.pair` (0600). Em 401 o gateway
+pareia de novo automaticamente.
+
+```toml
+# default: true — use a API v2 pareada
+opencode_pair = true
+
+# opcional: URL explícita. Vazio = descobre pelo serviço selecionado
+# (~/.local/state/opencode/service.json ou `opencode service status`).
+opencode_url = ""
+```
+
+Com `opencode_pair = false` (ou se o servidor estiver indisponível), o gateway
+cai no modo offline: catálogo via `opencode api get /api/model` e credenciais
+da tabela `credential` do SQLite (somente leitura). O mapeamento
+provider → integração continua correto no modo pareado: por exemplo
+`opencode-go/*` usa a credencial da integração `opencode`.
+
+Se `opencode_url` apontar para um servidor diferente do serviço selecionado
+(ex.: `opencode serve --standalone`), o CLI precisa da senha desse servidor:
+exporte `OPENCODE_PASSWORD` no ambiente do gateway antes de subir.
 
 ## Escolhendo modelos — modelMap
 
@@ -202,5 +220,4 @@ parâmetro do wire protocol do upstream:
 
 - [Configuração no Claude Code CLI](config-cli.md) — env, `settings.json`, subagentes.
 - [Configuração no Claude Desktop](config-desktop.md) — managed-settings, `[tiers]`.
-- [Configuração no Codex](config-codex.md) — Responses API, `~/.codex/config.toml`.
 - [Erros e diagnóstico](erros.md) — saúde do gateway e tabela de sintomas.

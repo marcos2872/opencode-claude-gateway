@@ -33,13 +33,8 @@ fn fallback_session_id() -> String {
 
 /// Outgoing Go session headers derived from the incoming client headers.
 /// Go recognizes Claude Code's native session header; always also send
-/// `x-opencode-session` (required for routing).
-///
-/// Codex sends neither Claude header (`session-id` / `thread-id` instead —
-/// both uuids, `thread-id` identifying the conversation), so those are
-/// consulted only after the existing headers: the Claude Code path is
-/// byte-identical, and the Codex edge still gets a stable per-conversation
-/// value instead of the persisted fallback.
+/// `x-opencode-session` (required for routing). Headerless callers get a
+/// persisted fallback so prompt caching still sees a stable key.
 pub(crate) fn session_headers(incoming: &HeaderMap) -> Vec<(String, String)> {
     let mut out = vec![];
     let claude = incoming
@@ -60,19 +55,7 @@ pub(crate) fn session_headers(incoming: &HeaderMap) -> Vec<(String, String)> {
     } else if !claude.is_empty() {
         claude
     } else {
-        // Codex: `session-id` (per request) first, then `thread-id`
-        // (conversation) — the Go docs ask for a consistent key per
-        // conversation for prompt caching.
-        let codex = incoming
-            .get("session-id")
-            .or_else(|| incoming.get("thread-id"))
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        if codex.is_empty() {
-            fallback_session_id()
-        } else {
-            codex.to_string()
-        }
+        fallback_session_id()
     };
     out.push(("x-opencode-session".to_string(), session));
     out
@@ -103,28 +86,8 @@ mod tests {
     }
 
     #[test]
-    fn codex_session_id_maps_to_opencode_session() {
-        let h = hdrs(&[("session-id", "codex-sess")]);
-        let out = session_headers(&h);
-        assert_eq!(
-            out,
-            vec![("x-opencode-session".into(), "codex-sess".into())]
-        );
-    }
-
-    #[test]
-    fn codex_thread_id_is_the_second_choice() {
-        let h = hdrs(&[("thread-id", "codex-thread")]);
-        let out = session_headers(&h);
-        assert_eq!(
-            out,
-            vec![("x-opencode-session".into(), "codex-thread".into())]
-        );
-    }
-
-    #[test]
-    fn explicit_opencode_session_still_beats_codex_headers() {
-        let h = hdrs(&[("x-opencode-session", "explicit"), ("session-id", "codex")]);
+    fn explicit_opencode_session_wins_over_fallback() {
+        let h = hdrs(&[("x-opencode-session", "explicit")]);
         let out = session_headers(&h);
         assert_eq!(out, vec![("x-opencode-session".into(), "explicit".into())]);
     }

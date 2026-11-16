@@ -1,7 +1,7 @@
 # Desenvolvimento
 
 [← README](../README.md) · [Configuração](configuracao.md) · [CLI](config-cli.md) ·
-[Desktop](config-desktop.md) · [Codex](config-codex.md) · [Erros](erros.md) · **Dev** ·
+[Desktop](config-desktop.md) · [Erros](erros.md) · **Dev** ·
 [Arquitetura](arquitetura.md)
 
 Pré-requisitos: Rust stable, `opencode` v2 logado (`opencode auth login`).
@@ -9,14 +9,71 @@ Pré-requisitos: Rust stable, `opencode` v2 logado (`opencode auth login`).
 ## Comandos
 
 ```bash
-cargo test                    # testes unitários (tradução, aliases, config) + e2e (tests/gateway.rs, tests/codex.rs, tests/cache_usage.rs)
+cargo test                    # testes unitários (tradução, aliases, config) + e2e (tests/gateway.rs, tests/pair.rs, tests/cache_usage.rs)
 cargo test --test gateway     # só os testes e2e do gateway
+cargo test --test pair        # pareamento v2 + catálogo/providers/credenciais
 cargo test --test perf        # latência de tradução do proxy (report-only em debug)
 cargo test <name>             # teste único por substring do nome
 cargo llvm-cov --locked --all-targets --summary-only  # cobertura (requer llvm-tools-preview + cargo-llvm-cov)
 cargo clippy -- -D warnings   # lint (precisa estar limpo)
 cargo fmt --check             # formatação (precisa estar limpa)
+./scripts/dev.sh              # servidor em modo dev (config/token/pair isolados)
 ```
+
+## Modo dev (`scripts/dev.sh`)
+
+Sobe o `ocg --serve` em foreground com um config gerado em
+`target/dev/config.toml`, token de teste (`dev-secret`) e cache de pareamento em
+`target/dev/ocg.pair` — não toca no config nem no token do seu uso normal.
+
+```bash
+./scripts/dev.sh                       # http://127.0.0.1:3939, auth dev-secret
+./scripts/dev.sh --no-auth             # sem auth_token (aceita qualquer)
+./scripts/dev.sh --offline             # opencode_pair=false (CLI + SQLite)
+./scripts/dev.sh --port 3940 --fresh-pair
+./scripts/dev.sh --model claude-opencode-go-glm-5-3-flash
+./scripts/dev.sh --dry-run             # mostra config + comando e sai
+```
+
+Ele compila (use `--no-build` para pular), espera `/health` e imprime o
+comando do Claude Code:
+
+```bash
+claude --settings target/dev/claude-settings.json
+```
+
+Esse arquivo tem `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` e
+`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`. O `--settings` tem precedência
+sobre o `env` do `~/.claude/settings.json` — importante se o seu settings já
+aponta para o backend direto do OpenCode. `Ctrl+C` derruba o servidor. Os
+detalhes de teste de auth/modelos com `curl` estão em [Erros](erros.md) e no
+`--help` do script.
+
+## Landing page (`web/`)
+
+A página é estática, sem build step, e é publicada como está pelo workflow
+[`pages.yml`](../.github/workflows/pages.yml) em todo push na `main` que tocar
+`web/**`:
+
+| Arquivo | Conteúdo |
+|---|---|
+| `web/index.html` | HTML semântico: hero, como funciona, instalar, configurar, limites |
+| `web/styles.css` | tokens de cor/tipografia, layouts, tabelas e breakpoints |
+| `web/app.js` | tabs, botões de copiar e o seletor de exemplos da tradução |
+| `web/assets/logo.svg` | logo/favicon (cópia para o artifact ser autocontido) |
+
+Para pré-visualizar localmente:
+
+```bash
+cd web && python3 -m http.server 8000
+# abra http://127.0.0.1:8000/
+```
+
+Não há partials nem template engine: as seções são delimitadas por comentários
+no `index.html`, e o CSS/JS ficam em arquivos próprios para não misturar
+conteúdo, estilo e comportamento. Se um dia a página crescer a ponto de precisar
+de partials, o workflow do Pages teria que rodar um build antes de subir o
+artifact — hoje isso não é necessário.
 
 ## CI e hooks
 
@@ -143,38 +200,6 @@ curl -s http://127.0.0.1:3737/health | jq '{default_model, models}'
 curl -s http://127.0.0.1:3737/v1/models | jq -r '.data[0].id'
 ```
 
-### Dump do corpo traduzido (Responses)
-
-Quando um upstream rejeita um `/responses` traduzido, o log só tem contagens
-(`request_summary`), nunca o corpo — impossível dizer qual campo quebrou.
-`OCG_DUMP_RESPONSES_BODY` grava o JSON exato que seria enviado:
-
-```bash
-mkdir -p /tmp/ocg-dump
-OCG_DUMP_RESPONSES_BODY=/tmp/ocg-dump \
-  RUST_LOG=opencode_claude_gateway=warn cargo run -- --serve --port 3737
-# valor "1" (ou vazio) grava no diretório temporário do sistema
-```
-
-Cada request gera `ocg-resp-dump-<nanos>-<modelo>.json` e uma linha
-`dumped translated responses body path=...` (WARN) — cruze pelo horário com
-`upstream rejected request` para achar o corpo que falhou. Com o dump em mãos,
-replay/bisseção contra o upstream:
-
-```bash
-# repro e corte: full | ablate <chave> | front <n> | tailkeep <n> | pick <i,j,...>
-python3 scripts/replay_responses.py <dump.json> full
-```
-
-⚠️ O dump contém o **conteúdo integral do prompt** (diferente do log, que só
-tem contagens). Não commite, não publique; apague após o diagnóstico
-(`rm -rf /tmp/ocg-dump`).
-
-Útil para diagnosticar `400 The request contains invalid parameters` — ex.: o
-sintoma que levou à regra de defer em `infra/upstream/responses.rs` (texto de
-usuário entre `function_call`s pendentes e seus outputs era rejeitado pelo
-backend opencode-go).
-
 ## Resetando o cache do Claude Code (dev)
 
 O discovery (`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`) busca
@@ -236,13 +261,14 @@ Logs: `~/.local/share/opencode-claude-gateway/ocg.log`.
 ## Estado de build
 
 - `cargo clippy -- -D warnings` e `cargo fmt --check` precisam ficar limpos (como no CI).
-- Os testes e2e (`tests/gateway.rs`, `tests/codex.rs`, `tests/cache_usage.rs`)
-  usam um upstream mock — nunca chamam o binário real nem a rede.
-- O model catalog vem de `opencode api get /api/model`; os testes de servidor usam um `AppState` semeados.
+- Os testes e2e (`tests/gateway.rs`, `tests/pair.rs`, `tests/cache_usage.rs`)
+  usam um upstream mock — nunca chamam o binário real nem a rede. `tests/pair.rs`
+  usa um shim de `opencode` e um servidor v2 mock em loopback.
+- O model catalog vem do pareamento v2 (fallback `opencode api get /api/model`);
+  os testes de servidor usam um `AppState` semeado e `opencode_pair = false`.
 
 ## Veja também
 
 - [Arquitetura](arquitetura.md) — estrutura do código (domínio, infra, API).
 - [Configuração do gateway](configuracao.md) — opções de `config.toml`.
-- [Configuração no Codex](config-codex.md) — a segunda borda de cliente (`/v1/responses`).
 - [Erros e diagnóstico](erros.md) — sintomas comuns e logs.
