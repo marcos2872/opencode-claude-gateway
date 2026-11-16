@@ -102,3 +102,4 @@ pre-commit opcional. Como rodar em dev, testes, release e a suíte de latência:
 - [Erros e diagnóstico](docs/erros.md) — `/health`, logs e tabela de sintomas.
 - [Desenvolvimento](docs/dev.md) — como rodar em dev, testes, lint, releases.
 - [Arquitetura](docs/arquitetura.md) — como o gateway é estruturado (domínio, infra, API).
+- [Plugins do Claude Code](plugins/) — mod `agent-usage`: cota do OpenCode Go (janelas + créditos) na linha de status.
