@@ -35,9 +35,19 @@ Sobe o `ocg --serve` em foreground com um config gerado em
 ./scripts/dev.sh --dry-run             # mostra config + comando e sai
 ```
 
-Ele compila (use `--no-build` para pular), espera `/health` e imprime os
-`export` do Claude Code. `Ctrl+C` derruba o servidor. Os detalhes de teste de
-auth/modelos com `curl` estão em [Erros](erros.md) e no `--help` do script.
+Ele compila (use `--no-build` para pular), espera `/health` e imprime o
+comando do Claude Code:
+
+```bash
+claude --settings target/dev/claude-settings.json
+```
+
+Esse arquivo tem `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` e
+`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`. O `--settings` tem precedência
+sobre o `env` do `~/.claude/settings.json` — importante se o seu settings já
+aponta para o backend direto do OpenCode. `Ctrl+C` derruba o servidor. Os
+detalhes de teste de auth/modelos com `curl` estão em [Erros](erros.md) e no
+`--help` do script.
 
 ## CI e hooks
 

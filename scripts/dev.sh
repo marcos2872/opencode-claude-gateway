@@ -85,6 +85,7 @@ toml_escape() {
 STATE="$ROOT/target/dev"
 CONFIG="$STATE/config.toml"
 PAIR_FILE="$STATE/ocg.pair"
+CLAUDE_SETTINGS="$STATE/claude-settings.json"
 BIN="$ROOT/target/debug/ocg"
 BASE="http://127.0.0.1:$PORT"
 
@@ -114,9 +115,26 @@ mkdir -p "$STATE"
   echo "opencode_url = \"$(toml_escape "$OPENCODE_URL")\""
 } > "$CONFIG"
 
+# `--settings` sits above ~/.claude/settings.json in Claude Code precedence.
+# This matters when the user settings already pin ANTHROPIC_BASE_URL (the
+# common case for a direct OpenCode setup).
+EFFECTIVE_TOKEN="${TOKEN:-dummy}"
+cat > "$CLAUDE_SETTINGS" <<EOF
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "$BASE",
+    "ANTHROPIC_AUTH_TOKEN": "$(toml_escape "$EFFECTIVE_TOKEN")",
+    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1"
+  }
+}
+EOF
+
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "# config: $CONFIG"
   cat "$CONFIG"
+  echo
+  echo "# Claude Code settings: $CLAUDE_SETTINGS"
+  cat "$CLAUDE_SETTINGS"
   echo
   echo "# comando:"
   printf 'OCG_PAIR_SESSION=%q RUST_LOG=%q %q --serve --config %q --port %q' \
@@ -141,19 +159,16 @@ echo "  token:  ${TOKEN:-<desativado>}"
 echo "  config: $CONFIG"
 echo "  pair:   $([[ "$PAIR_ENABLED" -eq 1 ]] && echo "enabled ($PAIR_FILE)" || echo "offline (CLI + SQLite)")"
 echo "  logs:   RUST_LOG=$LOG_LEVEL"
+echo "  Claude Code (uma sessão; sobrepõe ANTHROPIC_BASE_URL do settings.json):"
+echo "    claude --settings $CLAUDE_SETTINGS"
 echo
 if [[ -n "$TOKEN" ]]; then
   echo "  curl -s $BASE/health"
   echo "  curl -s -H 'x-api-key: $TOKEN' $BASE/v1/models | jq -r '.data[].id'"
-  echo "  export ANTHROPIC_BASE_URL=$BASE"
-  echo "  export ANTHROPIC_AUTH_TOKEN=$TOKEN"
 else
   echo "  curl -s $BASE/health"
   echo "  curl -s $BASE/v1/models | jq -r '.data[].id'"
-  echo "  export ANTHROPIC_BASE_URL=$BASE"
-  echo "  export ANTHROPIC_AUTH_TOKEN=dummy"
 fi
-echo "  export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1"
 echo
 echo "Ctrl+C para parar."
 echo
