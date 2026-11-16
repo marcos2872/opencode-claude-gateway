@@ -32,6 +32,8 @@ pub struct AppState {
     pub http: reqwest::Client,
     /// OpenCode v2 HTTP client (pair session, catalog, credentials).
     pub opencode: SharedOpenCode,
+    /// `GET /usage` report cache (quota probes are upstream calls).
+    pub usage: crate::api::usage::UsageCache,
 }
 
 impl AppState {
@@ -55,6 +57,7 @@ impl AppState {
             last_error: Arc::new(RwLock::new(None)),
             http,
             opencode,
+            usage: crate::api::usage::UsageCache::new(),
         }
     }
 

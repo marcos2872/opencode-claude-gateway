@@ -8,6 +8,7 @@ use super::errors::anthropic_error;
 use super::forward::{forward_anthropic, forward_openai, forward_responses, ForwardCtx};
 use super::mock::mock_check_response;
 pub use super::state::AppState;
+use super::usage::usage;
 use crate::domain::{protocol_for_entry, strip_window_suffix, window_suffix, Protocol};
 use axum::{
     extract::{DefaultBodyLimit, State},
@@ -27,6 +28,7 @@ const MAX_REQUEST_BODY: usize = 64 * 1024 * 1024;
 pub fn router(state: AppState) -> Router {
     let app = Router::new()
         .route("/health", get(health))
+        .route("/usage", get(usage))
         .route("/v1/models", get(list_models))
         .route("/v1/messages/count_tokens", post(count_tokens))
         .route("/v1/messages", post(messages));
