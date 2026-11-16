@@ -49,6 +49,32 @@ aponta para o backend direto do OpenCode. `Ctrl+C` derruba o servidor. Os
 detalhes de teste de auth/modelos com `curl` estão em [Erros](erros.md) e no
 `--help` do script.
 
+## Landing page (`web/`)
+
+A página é estática, sem build step, e é publicada como está pelo workflow
+[`pages.yml`](../.github/workflows/pages.yml) em todo push na `main` que tocar
+`web/**`:
+
+| Arquivo | Conteúdo |
+|---|---|
+| `web/index.html` | HTML semântico: hero, como funciona, instalar, configurar, limites |
+| `web/styles.css` | tokens de cor/tipografia, layouts, tabelas e breakpoints |
+| `web/app.js` | tabs, botões de copiar e o seletor de exemplos da tradução |
+| `web/assets/logo.svg` | logo/favicon (cópia para o artifact ser autocontido) |
+
+Para pré-visualizar localmente:
+
+```bash
+cd web && python3 -m http.server 8000
+# abra http://127.0.0.1:8000/
+```
+
+Não há partials nem template engine: as seções são delimitadas por comentários
+no `index.html`, e o CSS/JS ficam em arquivos próprios para não misturar
+conteúdo, estilo e comportamento. Se um dia a página crescer a ponto de precisar
+de partials, o workflow do Pages teria que rodar um build antes de subir o
+artifact — hoje isso não é necessário.
+
 ## CI e hooks
 
 O workflow [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) roda em todo

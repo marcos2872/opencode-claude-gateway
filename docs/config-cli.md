@@ -43,10 +43,23 @@ pré-visualiza o catálogo (reinicie o gateway para recarregar).
 
 ## Fixando o modelo dos subagentes
 
-O Claude Code pode escolher automaticamente um modelo para subagentes como
-`Explore` e `general-purpose`. Quando a sessão usa o ocg, fixe esse
-modelo em um id que exista no catálogo do gateway para evitar erros como
-`model_not_found` com um id de snapshot da Anthropic que o OpenCode não oferece.
+O Claude Code resolve o modelo do subagente nesta ordem: `model` passado na
+invocação → `model` do agente (`inherit` é válido) → `CLAUDE_CODE_SUBAGENT_MODEL`
+→ modelo da conversa principal (ou do subagente pai, se aninhado). Ou seja,
+**sem `model` explícito o padrão é herdar o modelo da sessão**, mas isso não é
+uma garantia: um agente com `model` fixo, uma invocação explícita ou a variável
+acima mudam o resultado. Built-ins também têm regras próprias: `Explore` tem
+tratamento especial quando o pai roda Fable, `statusline-setup` usa Sonnet e
+`claude-code-guide` usa Haiku.
+
+`CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` **sem** `CLAUDE_CODE_SUBAGENT_MODEL`
+faz os subagentes usarem o modelo da conversa principal (exceto o comportamento
+built-in do `Explore`). Com um id definido **e** `FORCE=1`, todos usam aquele id
+fixo — ele **não acompanha** o `/model` da sessão.
+
+Quando a sessão usa o ocg, o caminho mais confiável é fixar um id que exista no
+catálogo do gateway, para evitar `model_not_found` com um snapshot da Anthropic
+que o OpenCode não oferece:
 
 Liste os ids disponíveis e copie um deles exatamente:
 
@@ -84,6 +97,23 @@ Para persistir a configuração em `~/.claude/settings.json`, adicione ao bloco
 Feche e reabra o Claude Code depois de alterar essas variáveis. Sem
 `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`, uma definição de agente ou uma escolha por
 invocação pode substituir o modelo padrão.
+
+Se o objetivo é **seguir o modelo atual da sessão** em vez de fixar um id,
+use `model: inherit` nos agentes que você controla, ou `FORCE=1` sem definir
+`CLAUDE_CODE_SUBAGENT_MODEL` (com a ressalva do `Explore` acima). Para os
+aliases de família que o CLI resolve sozinho (`opus`/`sonnet`/`haiku`), mapeie
+cada um para um id do gateway:
+
+```json
+{
+  "env": {
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opencode-go-deepseek-v4-1-flash",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-opencode-go-glm-5-3-flash",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-opencode-go-muse-spark-1-3-contributor",
+    "ANTHROPIC_SMALL_FAST_MODEL": "claude-opencode-go-muse-spark-1-3-contributor"
+  }
+}
+```
 
 ## Blindando o Copilot contra chamadas de fundo (ids blindados)
 

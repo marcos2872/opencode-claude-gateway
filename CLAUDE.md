@@ -38,8 +38,10 @@ failing tests (admins may still push directly). An opt-in pre-commit hook
 (`.githooks/pre-commit`, same three commands) is enabled per clone with
 `git config core.hooksPath .githooks`. `.github/workflows/pages.yml` publishes
 `web/` to GitHub Pages on every `main` push touching `web/**` (or the workflow
-itself); the folder is self-contained (`web/assets/logo.svg`, relative paths)
-because the artifact is uploaded as the site root.
+itself); the folder is self-contained (`web/index.html`, `web/styles.css`,
+`web/app.js`, `web/assets/logo.svg`, relative paths) because the artifact is
+uploaded as the site root. There is no web build step: edit the HTML, CSS and JS
+directly.
 
 Daemon lifecycle: `ocg --start [--port PORT] | --stop | --status`. Auto-start
 on login is separate: `ocg --enable` / `--disable` install/remove a systemd
