@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>opencode-claude-gateway — seus modelos do opencode no Claude Code e no Claude Desktop</title>
-<meta name="description" content="Gateway local compatível com Anthropic que expõe os modelos do OpenCode v2 ao Claude Code. Escuta em 127.0.0.1:3737 e nunca fala com a Anthropic.">
+<meta name="description" content="Gateway local compatível com Anthropic que expõe os modelos do OpenCode v2 ao Claude Code e ao Claude Desktop. Pareia com o serviço local do opencode, escuta em 127.0.0.1:3737 e nunca fala com a Anthropic.">
 <link rel="icon" type="image/svg+xml" href="../assets/logo.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Arimo:wght@400;600;700&family=DM+Mono:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Arimo:wght@400;600;700&amp;family=DM+Mono:ital,wght@0,400;0,500;1,400&amp;display=swap" rel="stylesheet">
 <style>
 /* ————————————————————————————————————————————————
    ocg — tokens
@@ -317,7 +317,7 @@ p code,li code,td code,dd code,.lede code{
   <section class="hero">
     <div class="wrap">
       <h1 class="d-xl">Seus modelos do opencode respondem como a API da Anthropic.</h1>
-      <p class="lede">O ocg é um gateway local. Ele recebe a Messages API que o Claude Code e o Claude Desktop falam, resolve o modelo no catálogo do OpenCode v2, traduz cada requisição para o protocolo do provedor — passthrough Anthropic, OpenAI Chat Completions ou Responses API — e traduz a resposta de volta, streaming incluído. Escuta só em <code class="mono">127.0.0.1</code> e nunca fala com a Anthropic: o upstream é o backend Go/Console do OpenCode, autenticado com o login que você já tem.</p>
+      <p class="lede">O ocg é um gateway local. Ele recebe a Messages API que o Claude Code e o Claude Desktop falam, resolve o modelo no catálogo do OpenCode v2, traduz cada requisição para o protocolo do provedor — passthrough Anthropic, OpenAI Chat Completions ou Responses API — e traduz a resposta de volta, streaming incluído. Pareia com o serviço local do opencode (<code class="mono">POST /api/pair</code> + <code class="mono">/auth/connect/:code</code>) e reaproveita as credenciais que você já tem. Escuta só em <code class="mono">127.0.0.1</code> e nunca fala com a Anthropic: o upstream é o backend Go/Console do OpenCode.</p>
       <div class="cta">
         <a class="btn" href="#instalar">Instalar em três comandos</a>
         <a class="btn ghost" href="#como">Ver a tradução</a>
@@ -361,7 +361,7 @@ p code,li code,td code,dd code,.lede code{
             <path d="M722,64 C840,64 840,150 950,150" fill="none" stroke="#8B8FF0" stroke-width="1.4" marker-end="url(#ah-c)"/>
             <path d="M950,150 C840,150 840,236 722,236" fill="none" stroke="#8B8FF0" stroke-width="1.4" marker-end="url(#ah-c)"/>
             <text x="819" y="86" text-anchor="middle" font-family="DM Mono, monospace" font-size="13" fill="#8B8FF0">messages · chat · responses</text>
-            <text x="819" y="272" text-anchor="middle" font-family="DM Mono, monospace" font-size="13" fill="#8B8FF0">SQLite credential · providers</text>
+            <text x="819" y="272" text-anchor="middle" font-family="DM Mono, monospace" font-size="13" fill="#8B8FF0">pair session · providers · credentials</text>
           </g>
 
           <!-- provider -->
@@ -373,7 +373,7 @@ p code,li code,td code,dd code,.lede code{
         </svg>
         <figcaption class="stage-cap">
           <b>Uma requisição, três dialetos de saída.</b>
-          <span>O cliente nunca sabe que não está falando com a Anthropic. O protocolo é escolhido por modelo, pelo catálogo.</span>
+          <span>O cliente nunca sabe que não está falando com a Anthropic. O protocolo é escolhido por modelo, pelo catálogo; catálogo, providers e credenciais vêm do serviço pareado (SQLite only como fallback).</span>
         </figcaption>
       </figure>
     </div>
@@ -406,7 +406,7 @@ p code,li code,td code,dd code,.lede code{
           <tbody>
             <tr><td>mensagens</td><td data-a>turnos <code>user</code> / <code>assistant</code> separados</td><td data-b>lista <code>messages[]</code> com <code>role</code> por item</td></tr>
             <tr><td>system</td><td data-a>parâmetro <code>system</code> de nível superior</td><td data-b>primeira entrada com <code>role: "system"</code></td></tr>
-            <tr><td>imagens</td><td data-a>bloco <code>{"type":"image"}</code> com base64</td><td data-b>parte <code>image_url</code> na mensagem</td></tr>
+            <tr><td>imagens</td><td data-a>bloco <code>{"type":"image"}</code> com base64 ou URL</td><td data-b>parte <code>image_url</code> na mensagem</td></tr>
             <tr><td>saída máxima</td><td data-a><code>max_tokens</code>, obrigatório</td><td data-b><code>max_tokens</code>, opcional</td></tr>
             <tr><td>temperatura</td><td data-a><code>temperature</code> 0–1</td><td data-b>repassado conforme o provedor aceita</td></tr>
             <tr><td>parada</td><td data-a><code>stop_sequences[]</code></td><td data-b><code>stop[]</code></td></tr>
@@ -437,7 +437,7 @@ p code,li code,td code,dd code,.lede code{
           <span class="k">03 · traduz</span>
           <div class="v">
             <h3 class="d-m">Traduz para o protocolo do modelo e encaminha</h3>
-            <p>Blocos de conteúdo, ferramentas e histórico são reconstruídos no formato do upstream. O <code class="mono">Bearer</code> vem do SQLite do OpenCode (tabela <code class="mono">credential</code>, lida em modo read-only — nunca <code class="mono">auth.json</code> como fonte) e o forward sempre envia <code class="mono">x-opencode-session</code>. Modelos free-tier <code class="mono">opencode/*</code> usam a chave pública de <code class="mono">settings.apiKey</code> e dão 403 fora do OpenCode — por isso ficam ocultos por padrão.</p>
+            <p>Blocos de conteúdo, ferramentas e histórico são reconstruídos no formato do upstream. O <code class="mono">Bearer</code> vem da credencial da integração lida do serviço pareado (<code class="mono">/api/credential</code>; o SQLite é só fallback offline, em read-only — nunca <code class="mono">auth.json</code> como fonte) e o forward sempre envia <code class="mono">x-opencode-session</code>. Modelos free-tier <code class="mono">opencode/*</code> usam a credencial OAuth da integração <code class="mono">opencode</code> (a chave pública de <code class="mono">settings.apiKey</code> é fallback legado) e dão 403 fora do OpenCode — por isso ficam ocultos por padrão.</p>
           </div>
         </div>
         <div>
@@ -455,13 +455,13 @@ p code,li code,td code,dd code,.lede code{
   <section class="band" id="instalar">
     <div class="wrap">
       <h2 class="d-l">Instalar</h2>
-      <p class="lede">O ocg não pede suas credenciais de novo. Ele herda o login que o opencode já tem — lido do banco SQLite, em memória, nunca logado.</p>
+      <p class="lede">O ocg não pede suas credenciais de novo. Ele pareia com o serviço local do OpenCode v2 e usa as integrações que já existem; o login nunca é logado. Se o serviço estiver indisponível, cai no SQLite em modo read-only.</p>
 
       <div class="cols">
         <div class="field">
           <div class="tag"><i>passo 1</i> <span>· pré-requisito, uma vez só</span></div>
           <h3>Tenha o OpenCode v2 autenticado</h3>
-          <p>Se <code class="mono">opencode auth login</code> já mostra seus provedores, pule para o passo 2. O ocg lê essa mesma credencial no SQLite (caminho via <code class="mono">opencode debug paths db</code>).</p>
+          <p>Se <code class="mono">opencode auth login</code> já mostra seus provedores, pule para o passo 2. O ocg pareia com o serviço v2 (<code class="mono">POST /api/pair</code> + <code class="mono">/auth/connect/:code</code>) e guarda o session token em <code class="mono">ocg.pair</code> (0600), renovando em 401. O SQLite (caminho via <code class="mono">opencode debug paths db</code>) fica como fallback offline.</p>
           <div class="term" style="margin-top:1rem">
             <div class="term-h"><span>shell</span><button class="copy" type="button" data-copy="opencode auth login">copiar</button></div>
             <pre><span class="c">$</span> <span class="k">opencode</span> auth login</pre>
@@ -472,7 +472,7 @@ p code,li code,td code,dd code,.lede code{
           <h3>Baixe da última release</h3>
           <p>Ou compile localmente com <code class="mono">cargo install --path .</code>.</p>
           <div class="term" style="margin-top:1rem">
-            <div class="term-h"><span>shell</span><button class="copy" type="button" data-copy="ocg --start">copiar</button></div>
+            <div class="term-h"><span>shell</span><button class="copy" type="button" data-copy="URL=$(gh release view --repo marcos2872/opencode-claude-gateway --json assets --jq '.assets[] | select(.name==&quot;ocg-linux-x86_64&quot;) | .url')&#10;curl -L &quot;$URL&quot; -o /tmp/ocg&#10;install -m 0755 /tmp/ocg ~/.local/bin/ocg&#10;ocg --version">copiar</button></div>
             <pre><span class="c">$</span> URL=$(gh release view --repo marcos2872/opencode-claude-gateway --json assets --jq <span class="s">'.assets[] | select(.name=="ocg-linux-x86_64") | .url'</span>)
 <span class="c">$</span> curl -L <span class="s">"$URL"</span> -o /tmp/ocg
 <span class="c">$</span> install -m 0755 /tmp/ocg ~/.local/bin/ocg
@@ -487,7 +487,7 @@ p code,li code,td code,dd code,.lede code{
           <h3>Rode como daemon em background</h3>
           <p>O catálogo é lido no boot em background (com retry); <code class="mono">/health</code> fica <code class="mono">starting</code> até o primeiro load.</p>
           <div class="term" style="margin-top:1rem">
-            <div class="term-h"><span>shell</span><button class="copy" type="button" data-copy="ocg --start">copiar</button></div>
+            <div class="term-h"><span>shell</span><button class="copy" type="button" data-copy="ocg --start&#10;ocg --status&#10;curl -s http://127.0.0.1:3737/health">copiar</button></div>
             <pre><span class="c">$</span> <span class="k">ocg</span> --start
 <span class="c">$</span> <span class="k">ocg</span> --status
 <span class="c">$</span> curl -s http://127.0.0.1:3737/health</pre>
@@ -560,7 +560,7 @@ claude</pre>
             <div class="term">
               <div class="term-h">
                 <span>shell — permissões exigidas + reinício</span>
-                <button class="copy" type="button" data-copy="ocg --start">copiar</button>
+                <button class="copy" type="button" data-copy="ocg --start&#10;sudo chown root:root /etc/claude-desktop/managed-settings.json&#10;sudo chmod 0644 /etc/claude-desktop/managed-settings.json&#10;sudo chmod 0755 /etc/claude-desktop">copiar</button>
               </div>
               <pre><span class="c">$</span> <span class="k">ocg</span> --start <span class="c"># ex.: http://127.0.0.1:3737</span>
 <span class="c">$</span> sudo chown root:root /etc/claude-desktop/managed-settings.json
@@ -598,11 +598,16 @@ claude</pre>
             <tr><td>port</td><td><code>3737</code></td><td>Porta do gateway (sempre em <code>127.0.0.1</code>).</td></tr>
             <tr><td>auth_token</td><td><code>""</code> (aceita qualquer)</td><td>Quando setado, todo endpoint exceto <code>GET /health</code> exige o token via <code>x-api-key</code> ou <code>Authorization: Bearer</code>. Token errado/ausente → 401.</td></tr>
             <tr><td>default_model</td><td><code>""</code> (primeiro alias)</td><td>Modelo usado quando o cliente omite <code>model</code>.</td></tr>
-            <tr><td>opencode_bin</td><td><code>"opencode"</code></td><td>Binário usado para catálogo (<code>api get /api/model</code>) e descoberta do DB (<code>debug paths db</code>).</td></tr>
+            <tr><td>opencode_bin</td><td><code>"opencode"</code></td><td>Binário usado para o pareamento (<code>api post /api/pair</code>), catálogo fallback (<code>api get /api/model</code>) e descoberta do DB (<code>debug paths db</code>).</td></tr>
+            <tr><td>opencode_pair</td><td><code>true</code></td><td>Pareia com o serviço v2 e lê catálogo, providers e credenciais por HTTP. <code>false</code> = modo offline (CLI + SQLite read-only). O token é renovado automaticamente em 401.</td></tr>
+            <tr><td>opencode_url</td><td><code>""</code></td><td>URL explícita do servidor v2. Vazio = descobre pelo serviço selecionado (state dir / <code>opencode service status</code>). Para um servidor diferente (standalone), exporte <code>OPENCODE_PASSWORD</code> no ambiente do gateway.</td></tr>
             <tr><td>[aliases."&lt;gateway-id&gt;"]</td><td>—</td><td>Alias manual (<code>opencode</code> + <code>display_name</code> / <code>description</code> opcionais). Tem precedência sobre os automáticos; o id precisa conter <code>claude</code>/<code>anthropic</code> para o discovery listar.</td></tr>
             <tr><td>[disabled] models</td><td><code>[]</code></td><td>Refs (gateway id ou ref <code>provider/model</code>) escondidas de <code>/v1/models</code>.</td></tr>
-            <tr><td>include_free_tier</td><td><code>false</code></td><td>Mostra modelos <code>opencode/*</code> no picker. Eles dão 403 fora do OpenCode — só ative sabendo.</td></tr>
+            <tr><td>include_free_tier</td><td><code>false</code></td><td>Mostra modelos <code>opencode/*</code> no picker. Usam a credencial OAuth da integração <code>opencode</code>; dão 403 fora do OpenCode — só ative sabendo.</td></tr>
             <tr><td>desktop_aliases</td><td><code>false</code></td><td>Reescreve o id anunciado para furar a denylist do picker do Desktop (<code>deepseek</code> → <code>d-eepseek</code>, etc.). Só o id muda; refs, display names e resolução intactos.</td></tr>
+            <tr><td>cli_shield_aliases</td><td><code>true</code></td><td>Reescreve o spelling de família nos ids anunciados (<code>claude-sonnet</code> → <code>cs</code>, <code>claude-opus</code> → <code>co</code>) para as chamadas de fundo do Claude Code CLI não caírem nas linhas Copilot.</td></tr>
+            <tr><td>mock_classifier</td><td><code>false</code></td><td>Responde localmente os checks do classificador do auto-mode (e probes de 1 token) do Claude Code, sem consumir cota. Conversas reais continuam indo ao upstream.</td></tr>
+            <tr><td>[tiers."&lt;ref&gt;"]</td><td>—</td><td>Tier de família Anthropic (<code>haiku</code>/<code>sonnet</code>/<code>opus</code>/<code>fable</code>/<code>mythos</code>) anunciado em <code>/v1/models</code> para o Claude Desktop escolher as chamadas de fundo.</td></tr>
             <tr><td>connect_timeout_secs</td><td><code>30</code></td><td>Timeout de conexão TCP/TLS com o upstream — provedor inalcançável falha rápido.</td></tr>
             <tr><td>request_timeout_secs</td><td><code>3600</code></td><td>Timeout total, <b>incluindo streaming</b>. Generoso de propósito: turno longo com reasoning fica aberto minutos.</td></tr>
           </tbody>
@@ -623,7 +628,7 @@ claude</pre>
             </tr>
           </thead>
           <tbody>
-            <tr><td>--start [--port N]</td><td>daemon</td><td>Sobe o filho destacado com <code>--serve</code>, espera <code>/health</code> e imprime os <code>export</code> do Claude Code. Estado em <code>~/.local/share/opencode-claude-gateway/</code> (<code>ocg.pid</code>, <code>ocg.port</code>, <code>ocg.session</code>, <code>ocg.log</code>, todos 0600).</td></tr>
+            <tr><td>--start [--port N]</td><td>daemon</td><td>Sobe o filho destacado com <code>--serve</code>, espera <code>/health</code> e imprime os <code>export</code> do Claude Code. Estado em <code>~/.local/share/opencode-claude-gateway/</code> (<code>ocg.pid</code>, <code>ocg.port</code>, <code>ocg.session</code>, <code>ocg.pair</code>, <code>ocg.log</code>, todos 0600).</td></tr>
             <tr><td>--stop</td><td>daemon</td><td>Envia SIGTERM (drena streams SSE) e limpa o estado.</td></tr>
             <tr><td>--status</td><td>daemon</td><td>Diz se está rodando, em qual porta, se responde, e se o auto-start está ligado.</td></tr>
             <tr><td>--enable</td><td>auto-start</td><td>Instala e habilita o systemd user service (sobe no login). Não inicia o gateway agora.</td></tr>
@@ -674,7 +679,7 @@ claude</pre>
         </div>
       </div>
 
-      <div class="note"><b>Regra de ouro:</b> catálogo é lido <b>uma vez no boot</b> (com até 6 tentativas e backoff 2s → 16s enquanto vier vazio). Sem refresh automático — modelo novo/removido ou <code class="mono">opencode auth</code> novo pede <code class="mono">ocg --stop && ocg --start</code>. <code class="mono">--refresh</code> só pré-visualiza.</div>
+      <div class="note"><b>Regra de ouro:</b> catálogo é lido <b>uma vez no boot</b> (com até 6 tentativas e backoff 2s → 16s enquanto vier vazio). Sem refresh automático — modelo novo/removido ou <code class="mono">opencode auth</code> novo pede <code class="mono">ocg --stop && ocg --start</code>. <code class="mono">--refresh</code> só pré-visualiza. Credenciais são re-lidas periodicamente e o pareamento é renovado em 401, então rotação de token não exige reiniciar.</div>
     </div>
   </section>
 
@@ -693,9 +698,16 @@ claude</pre>
           </div>
         </details>
         <details>
+          <summary>Arquivos/PDF e thinking não atravessam todos os protocolos</summary>
+          <div class="body">
+            <p>Blocos <code class="mono">document</code> (PDF/texto) e <code class="mono">thinking</code>/<code class="mono">redacted_thinking</code> são repassados intactos só em modelos Anthropic (passthrough). Nos caminhos Chat Completions e Responses API esses blocos são descartados — é uma limitação de representação do protocolo de destino, não um erro de tradução.</p>
+            <p>Imagens continuam funcionando nos três caminhos: base64, URL e imagens aninhadas em <code class="mono">tool_result</code>. Arquivos de texto lidos por ferramentas (<code class="mono">Read</code> etc.) chegam normalmente como <code class="mono">tool_result</code>.</p>
+          </div>
+        </details>
+        <details>
           <summary>É um proxy local, não um serviço hospedado</summary>
           <div class="body">
-            <p>O ocg escuta só em <code class="mono">127.0.0.1</code>, abre o DB em read-only e mantém segredos só em memória (nunca logados). Arquivos de estado (<code class="mono">ocg.pid</code>, <code class="mono">ocg.port</code>, <code class="mono">ocg.session</code>, <code class="mono">ocg.log</code>) são criados <code class="mono">0600</code>. Suas chaves e conversas passam por ele, mas ficam entre você e o provedor — nada é enviado para terceiros.</p>
+            <p>O ocg escuta só em <code class="mono">127.0.0.1</code>, mantém credenciais só em memória (nunca logadas) e, no fallback offline, abre o DB em read-only. O session token de pareamento é cacheado em <code class="mono">ocg.pair</code> <code class="mono">0600</code>. Arquivos de estado (<code class="mono">ocg.pid</code>, <code class="mono">ocg.port</code>, <code class="mono">ocg.session</code>, <code class="mono">ocg.pair</code>, <code class="mono">ocg.log</code>) são criados <code class="mono">0600</code>. Suas chaves e conversas passam por ele, mas ficam entre você e o provedor — nada é enviado para terceiros.</p>
           </div>
         </details>
         <details>
@@ -789,7 +801,7 @@ claude</pre>
     text: {
       messages: ['turnos <code>user</code> / <code>assistant</code> separados', 'lista <code>messages[]</code> com <code>role</code> por item'],
       system:   ['parâmetro <code>system</code> de nível superior', 'primeira entrada com <code>role: "system"</code>'],
-      images:   ['bloco <code>{"type":"image"}</code> com base64', 'parte <code>image_url</code> na mensagem'],
+      images:   ['bloco <code>{"type":"image"}</code> com base64 ou URL', 'parte <code>image_url</code> na mensagem'],
       max:      ['<code>max_tokens</code>, obrigatório', '<code>max_tokens</code>, opcional'],
       stop:     ['<code>stop_sequences[]</code>', '<code>stop[]</code>'],
       ret:      ['<code>"type": "message"</code>', 'escolha com <code>finish_reason: "stop"</code>']
