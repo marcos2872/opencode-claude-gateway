@@ -19,6 +19,8 @@ cargo fmt --check             # must stay clean
 cargo run -- --refresh        # print catalog + gateway aliases, exit
 cargo run -- --serve          # foreground server on 127.0.0.1:3737
 cargo run -- --status         # daemon state + hint when run with no flag
+./scripts/dev.sh              # dev server: isolated config/token/pair in target/dev/
+```
 ```
 
 Debugging knob (read from the process env, so use `--serve`, not the daemon):

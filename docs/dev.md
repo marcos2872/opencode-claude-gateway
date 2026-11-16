@@ -17,7 +17,27 @@ cargo test <name>             # teste único por substring do nome
 cargo llvm-cov --locked --all-targets --summary-only  # cobertura (requer llvm-tools-preview + cargo-llvm-cov)
 cargo clippy -- -D warnings   # lint (precisa estar limpo)
 cargo fmt --check             # formatação (precisa estar limpa)
+./scripts/dev.sh              # servidor em modo dev (config/token/pair isolados)
 ```
+
+## Modo dev (`scripts/dev.sh`)
+
+Sobe o `ocg --serve` em foreground com um config gerado em
+`target/dev/config.toml`, token de teste (`dev-secret`) e cache de pareamento em
+`target/dev/ocg.pair` — não toca no config nem no token do seu uso normal.
+
+```bash
+./scripts/dev.sh                       # http://127.0.0.1:3939, auth dev-secret
+./scripts/dev.sh --no-auth             # sem auth_token (aceita qualquer)
+./scripts/dev.sh --offline             # opencode_pair=false (CLI + SQLite)
+./scripts/dev.sh --port 3940 --fresh-pair
+./scripts/dev.sh --model claude-opencode-go-glm-5-3-flash
+./scripts/dev.sh --dry-run             # mostra config + comando e sai
+```
+
+Ele compila (use `--no-build` para pular), espera `/health` e imprime os
+`export` do Claude Code. `Ctrl+C` derruba o servidor. Os detalhes de teste de
+auth/modelos com `curl` estão em [Erros](erros.md) e no `--help` do script.
 
 ## CI e hooks
 
