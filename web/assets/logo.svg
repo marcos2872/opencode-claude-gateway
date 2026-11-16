@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="opencode-claude-gateway">
+  <title>opencode-claude-gateway (ocg)</title>
+  <!--
+    ocg — the gate.
+
+    A request enters in the Messages-API dialect (wire-a, #E0682E — Claude
+    Code / Claude Desktop), passes through the gate (wire-b, #3AA695 — the
+    gateway itself) and leaves in the provider dialect (wire-c, #8B8FF0 —
+    opencode), arrowhead on the exit side. The wire crosses the gate's left
+    leg in front (dark channel cut) and disappears behind the right leg:
+    one continuous line threading through the gateway.
+
+    Self-contained on the site's paper (#131210): the badge carries its own
+    background, so it sits on light or dark pages alike.
+  -->
+  <defs>
+    <linearGradient id="ocg-wire" gradientUnits="userSpaceOnUse" x1="18" y1="0" x2="114" y2="0">
+      <stop offset="0" stop-color="#E0682E"/>
+      <stop offset=".5" stop-color="#3AA695"/>
+      <stop offset="1" stop-color="#8B8FF0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- badge -->
+  <rect width="128" height="128" rx="28" fill="#131210"/>
+
+  <!-- wire, exit half (drawn first: the gate's right leg covers it) -->
+  <path d="M56 78 H104" fill="none" stroke="url(#ocg-wire)" stroke-width="9" stroke-linecap="round"/>
+  <path d="M100 70 L114 78 L100 86 Z" fill="#8B8FF0"/>
+
+  <!-- the gate -->
+  <path d="M40 92 V60 A24 24 0 0 1 88 60 V92" fill="none"
+        stroke="#3AA695" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- wire, entry half (channel through the left leg, then the wire in front) -->
+  <path d="M18 78 H56" fill="none" stroke="#131210" stroke-width="17" stroke-linecap="round"/>
+  <path d="M18 78 H66" fill="none" stroke="url(#ocg-wire)" stroke-width="9" stroke-linecap="round"/>
+</svg>
