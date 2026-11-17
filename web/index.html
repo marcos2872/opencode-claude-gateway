@@ -29,9 +29,8 @@
     <a class="mark" href="#"><img class="mark-icon" src="assets/logo.svg" alt="" width="24" height="24">ocg</a>
     <nav aria-label="Seções">
       <a href="#como">Como funciona</a>
-      <a href="#instalar">Instalar</a>
-      <a href="#configurar">Configurar</a>
-      <a class="opt" href="#limites">Limites</a>
+      <a href="#docs">Documentação</a>
+      <a class="opt" href="docs-instalacao.html">Instalar</a>
       <a class="opt" href="https://github.com/marcos2872/opencode-claude-gateway">GitHub</a>
     </nav>
   </div>
@@ -45,8 +44,8 @@
       <h1 class="d-xl">Seus modelos do opencode respondem como a API da Anthropic.</h1>
       <p class="lede">O ocg é um gateway local. Ele recebe a Messages API que o Claude Code e o Claude Desktop falam, resolve o modelo no catálogo do OpenCode v2, traduz cada requisição para o protocolo do provedor — passthrough Anthropic, OpenAI Chat Completions ou Responses API — e traduz a resposta de volta, streaming incluído. Pareia com o serviço local do opencode (<code class="mono">POST /api/pair</code> + <code class="mono">/auth/connect/:code</code>) e reaproveita as credenciais que você já tem. Escuta só em <code class="mono">127.0.0.1</code> e nunca fala com a Anthropic: o upstream é o backend Go/Console do OpenCode.</p>
       <div class="cta">
-        <a class="btn" href="#instalar">Instalar em três comandos</a>
-        <a class="btn ghost" href="#como">Ver a tradução</a>
+        <a class="btn" href="docs.html">Ler a documentação</a>
+        <a class="btn ghost" href="docs-instalacao.html">Instalar</a>
       </div>
 
       <figure class="stage" id="stage">
@@ -202,309 +201,27 @@
     </div>
   </section>
 
-  <!-- ————————————————— instalar ————————————————— -->
-  <section class="band" id="instalar">
+  <!-- ————————————————— docs ————————————————— -->
+  <section class="band" id="docs">
     <div class="wrap">
       <div class="band-head">
-        <h2 class="d-l">Instalar</h2>
-        <p class="lede">O ocg não pede suas credenciais de novo. Ele pareia com o serviço local do OpenCode v2 e usa as integrações que já existem; o login nunca é logado. Se o serviço estiver indisponível, cai no SQLite em modo read-only.</p>
+        <h2 class="d-l">Configurar é com a documentação.</h2>
+        <p class="lede">Cada opção do <code class="mono">config.toml</code>, aliases, variantes, os dois clientes, subagentes e a tabela de erros têm uma página própria, com a barra lateral de tópicos.</p>
       </div>
-
-      <div class="cols">
-        <div class="field">
-          <div class="tag"><i>passo 1</i> <span>· pré-requisito, uma vez só</span></div>
-          <h3>Tenha o OpenCode v2 autenticado</h3>
-          <p>Se <code class="mono">opencode auth login</code> já mostra seus provedores, pule para o passo 2. O ocg pareia com o serviço v2 (<code class="mono">POST /api/pair</code> + <code class="mono">/auth/connect/:code</code>) e guarda o session token em <code class="mono">ocg.pair</code> (0600), renovando em 401. O SQLite (caminho via <code class="mono">opencode debug paths db</code>) fica como fallback offline.</p>
-          <div class="term" style="margin-top:1rem">
-            <div class="term-h"><span>shell</span><button class="copy" type="button" data-copy="opencode auth login">copiar</button></div>
-            <pre><span class="c">$</span> <span class="k">opencode</span> auth login</pre>
-          </div>
-        </div>
-        <div class="field">
-          <div class="tag"><i>passo 2</i> <span>· instale o binário</span></div>
-          <h3>Baixe da última release</h3>
-          <p>Ou compile localmente com <code class="mono">cargo install --path .</code>.</p>
-          <div class="term" style="margin-top:1rem">
-            <div class="term-h"><span>shell</span><button class="copy" type="button" data-copy="URL=$(gh release view --repo marcos2872/opencode-claude-gateway --json assets --jq '.assets[] | select(.name==&quot;ocg-linux-x86_64&quot;) | .url')&#10;curl -L &quot;$URL&quot; -o /tmp/ocg&#10;install -m 0755 /tmp/ocg ~/.local/bin/ocg&#10;ocg --version">copiar</button></div>
-            <pre><span class="c">$</span> URL=$(gh release view --repo marcos2872/opencode-claude-gateway --json assets --jq <span class="s">'.assets[] | select(.name=="ocg-linux-x86_64") | .url'</span>)
-<span class="c">$</span> curl -L <span class="s">"$URL"</span> -o /tmp/ocg
-<span class="c">$</span> install -m 0755 /tmp/ocg ~/.local/bin/ocg
-<span class="c">$</span> <span class="k">ocg</span> --version</pre>
-          </div>
-        </div>
-      </div>
-
-      <div class="cols">
-        <div class="field">
-          <div class="tag"><i>passo 3</i> <span>· suba o gateway</span></div>
-          <h3>Rode como daemon em background</h3>
-          <p>O catálogo é lido no boot em background (com retry); <code class="mono">/health</code> fica <code class="mono">starting</code> até o primeiro load.</p>
-          <div class="term" style="margin-top:1rem">
-            <div class="term-h"><span>shell</span><button class="copy" type="button" data-copy="ocg --start&#10;ocg --status&#10;curl -s http://127.0.0.1:3737/health">copiar</button></div>
-            <pre><span class="c">$</span> <span class="k">ocg</span> --start
-<span class="c">$</span> <span class="k">ocg</span> --status
-<span class="c">$</span> curl -s http://127.0.0.1:3737/health</pre>
-          </div>
-          <p>Porta custom: <code class="mono">ocg --start --port 3740</code>. Com ele rodando, trocar de porta exige <code class="mono">--stop</code> antes. Logs em <code class="mono">~/.local/share/opencode-claude-gateway/ocg.log</code>. Prévia do catálogo sem subir: <code class="mono">ocg --refresh</code>.</p>
-        </div>
-        <div class="field">
-          <div class="tag"><i>passo 4</i> <span>· escolha o modelo no cliente</span></div>
-          <h3>Não há comando <code class="mono">use</code> — selecione no picker</h3>
-          <p>Os modelos aparecem em <code class="mono">GET /v1/models</code> como aliases <code class="mono">claude-&lt;provider&gt;-&lt;model&gt;</code>. No Claude Code, escolha com <code class="mono">/model</code> (exige <code class="mono">CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1</code>). Aliases manuais e <code class="mono">[disabled]</code> vão no <code class="mono">config.toml</code> — ver <a href="#configurar">Configurar</a>.</p>
-          <div class="term" style="margin-top:1rem">
-            <div class="term-h"><span>shell</span><button class="copy" type="button" data-copy="curl -s http://127.0.0.1:3737/v1/models | jq -r '.data[].id' | sort">copiar</button></div>
-            <pre><span class="c">$</span> curl -s http://127.0.0.1:3737/v1/models | jq -r <span class="s">'.data[].id'</span> | sort</pre>
-          </div>
-        </div>
-      </div>
-
-      <div class="tabs">
-        <div role="tablist" aria-label="Cliente a configurar">
-          <button type="button" role="tab" id="t-code" aria-controls="p-code" aria-selected="true">Claude Code</button>
-          <button type="button" role="tab" id="t-desktop" aria-controls="p-desktop" aria-selected="false">Claude Desktop</button>
-        </div>
-
-        <div role="tabpanel" id="p-code" aria-labelledby="t-code" tabindex="0">
-          <div class="stack">
-            <div class="term">
-              <div class="term-h">
-                <span>shell — sessão atual</span>
-                <button class="copy" type="button" data-copy="export ANTHROPIC_BASE_URL=http://127.0.0.1:3737">copiar</button>
-              </div>
-              <pre><span class="k">export</span> ANTHROPIC_BASE_URL=<span class="s">http://127.0.0.1:3737</span>
-<span class="k">export</span> ANTHROPIC_AUTH_TOKEN=<span class="s">dummy</span>
-<span class="k">export</span> CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=<span class="s">1</span>
-claude</pre>
-            </div>
-            <div class="term">
-              <div class="term-h">
-                <span>~/.claude/settings.json — persistente (escopo do usuário)</span>
-                <button class="copy" type="button" data-copy='{"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:3737", "ANTHROPIC_AUTH_TOKEN": "dummy", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1"}}'>copiar</button>
-              </div>
-              <pre>{
-  <span class="s">"env"</span>: {
-    <span class="s">"ANTHROPIC_BASE_URL"</span>: <span class="c">"http://127.0.0.1:3737"</span>,
-    <span class="s">"ANTHROPIC_AUTH_TOKEN"</span>: <span class="c">"dummy"</span>,
-    <span class="s">"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"</span>: <span class="c">"1"</span>
-  }
-}</pre>
-            </div>
-          </div>
-          <p><code class="mono">ANTHROPIC_AUTH_TOKEN</code> aqui é a <b>credencial do gateway</b> (<code class="mono">auth_token</code> do <code class="mono">config.toml</code>), não uma chave da Anthropic — por padrão o gateway aceita qualquer valor em loopback, então <code class="mono">dummy</code> basta. Quando <code class="mono">auth_token</code> está setado, o valor precisa ser igual. A credencial do provedor vem do SQLite do OpenCode; o gateway nunca fala com a API da Anthropic.</p>
-          <p><b>Já tem outro <code class="mono">ANTHROPIC_BASE_URL</code> no settings.json?</b> O <code class="mono">env</code> do arquivo vence os <code class="mono">export</code> do shell. Para usar o gateway só nesta sessão sem editar o arquivo, passe um settings temporário: <code class="mono">claude --settings '{"env":{...}}'</code> (o <code class="mono">--settings</code> tem precedência sobre o settings do usuário).</p>
-          <p>Subagentes (<code class="mono">Explore</code>, <code class="mono">general-purpose</code>) podem escolher um id de snapshot da Anthropic que o OpenCode não oferece. Fixe com um id exato de <code class="mono">/v1/models</code>: <code class="mono">CLAUDE_CODE_SUBAGENT_MODEL="SEU_ID_EXATO"</code> + <code class="mono">CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1</code>, incluindo o sufixo <code class="mono">[1m]</code> quando ele aparecer.</p>
-        </div>
-
-        <div role="tabpanel" id="p-desktop" aria-labelledby="t-desktop" tabindex="0" hidden>
-          <div class="stack">
-            <div class="term">
-              <div class="term-h">
-                <span>/etc/claude-desktop/managed-settings.json — Linux (porte comunitário)</span>
-                <button class="copy" type="button" data-copy='{"inferenceProvider": "gateway", "inferenceGatewayBaseUrl": "http://127.0.0.1:3737", "inferenceCredentialKind": "static", "inferenceGatewayApiKey": "dummy", "inferenceGatewayAuthScheme": "bearer", "modelDiscoveryEnabled": true}'>copiar</button>
-              </div>
-              <pre>{
-  <span class="s">"inferenceProvider"</span>: <span class="c">"gateway"</span>,
-  <span class="s">"inferenceGatewayBaseUrl"</span>: <span class="c">"http://127.0.0.1:3737"</span>,
-  <span class="s">"inferenceCredentialKind"</span>: <span class="c">"static"</span>,
-  <span class="s">"inferenceGatewayApiKey"</span>: <span class="c">"dummy"</span>,
-  <span class="s">"inferenceGatewayAuthScheme"</span>: <span class="c">"bearer"</span>,
-  <span class="s">"modelDiscoveryEnabled"</span>: true
-}</pre>
-            </div>
-            <div class="term">
-              <div class="term-h">
-                <span>shell — permissões exigidas + reinício</span>
-                <button class="copy" type="button" data-copy="ocg --start&#10;sudo chown root:root /etc/claude-desktop/managed-settings.json&#10;sudo chmod 0644 /etc/claude-desktop/managed-settings.json&#10;sudo chmod 0755 /etc/claude-desktop">copiar</button>
-              </div>
-              <pre><span class="c">$</span> <span class="k">ocg</span> --start <span class="c"># ex.: http://127.0.0.1:3737</span>
-<span class="c">$</span> sudo chown root:root /etc/claude-desktop/managed-settings.json
-<span class="c">$</span> sudo chmod 0644 /etc/claude-desktop/managed-settings.json <span class="c"># 0600 dá EACCES; o app lê como seu usuário</span>
-<span class="c">$</span> sudo chmod 0755 /etc/claude-desktop</pre>
-            </div>
-          </div>
-          <p>Base URL <b>sem</b> sufixo <code class="mono">/v1</code> (o app anexa <code class="mono">/v1/messages</code> sozinho) e com <code class="mono">127.0.0.1</code>, não <code class="mono">localhost</code>. <code class="mono">inferenceGatewayApiKey</code> = valor do <code class="mono">auth_token</code> do gateway (ou qualquer placeholder se vazio). Feche o Desktop por completo e reabra — a config só é lida no boot; na tela de login aparece <code class="mono">Continue with Gateway</code> (saia da conta Anthropic se já logado).</p>
-          <p>Builds oficiais Mac/Windows: <code class="mono">Help → Troubleshooting → Enable Developer Mode</code>, depois <code class="mono">Developer → Configure Third-Party Inference</code> com os mesmos valores (provider <code class="mono">Gateway</code>, <code class="mono">Static API key</code>, scheme <code class="mono">Bearer</code>). Para listar todos os modelos no picker, ative <code class="mono">desktop_aliases = true</code> (ver <a href="#configurar">Configurar</a>) e reinicie gateway + Desktop.</p>
-        </div>
+      <div class="cta">
+        <a class="btn" href="docs.html">Abrir a documentação</a>
+        <a class="btn ghost" href="docs-config.html">Referência do config.toml</a>
       </div>
     </div>
   </section>
 
-  <!-- ————————————————— configurar ————————————————— -->
-  <section class="band" id="configurar">
-    <div class="wrap">
-      <div class="band-head">
-        <h2 class="d-l">Configurar</h2>
-        <p class="lede">Arquivo em <code class="mono">~/.config/opencode-claude-gateway/config.toml</code> — <b>criado automaticamente no primeiro run</b> com todas as opções comentadas (descomente e edite; exemplo completo em <code class="mono">config.example.toml</code>). Overrides: <code class="mono">--port</code> / <code class="mono">OCG_PORT</code>, <code class="mono">--config</code> / <code class="mono">OCG_CONFIG</code>, <code class="mono">OCG_AUTH_TOKEN</code> (não-vazio sobrescreve o arquivo). O config é lido no boot — trocar exige reiniciar (<code class="mono">--stop</code> + <code class="mono">--start</code>). Arquivo inválido é erro fatal, não default silencioso.</p>
-      </div>
-
-      <div class="translate spec">
-        <div class="translate-h">
-          <span class="tag"><i>config.toml</i> <span>· todas as chaves</span></span>
-        </div>
-        <table>
-          <caption class="sr-only">Chaves do config.toml e seus padrões</caption>
-          <thead>
-            <tr>
-              <th scope="col">chave</th>
-              <th scope="col">padrão</th>
-              <th scope="col">o que faz</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td>port</td><td><code>3737</code></td><td>Porta do gateway (sempre em <code>127.0.0.1</code>).</td></tr>
-            <tr><td>auth_token</td><td><code>""</code> (aceita qualquer)</td><td>Quando setado, todo endpoint exceto <code>GET /health</code> exige o token via <code>x-api-key</code> ou <code>Authorization: Bearer</code>. Token errado/ausente → 401.</td></tr>
-            <tr><td>default_model</td><td><code>""</code> (primeiro alias)</td><td>Modelo usado quando o cliente omite <code>model</code>.</td></tr>
-            <tr><td>opencode_bin</td><td><code>"opencode"</code></td><td>Binário usado para o pareamento (<code>api post /api/pair</code>), catálogo fallback (<code>api get /api/model</code>) e descoberta do DB (<code>debug paths db</code>).</td></tr>
-            <tr><td>opencode_pair</td><td><code>true</code></td><td>Pareia com o serviço v2 e lê catálogo, providers e credenciais por HTTP. <code>false</code> = modo offline (CLI + SQLite read-only). O token é renovado automaticamente em 401.</td></tr>
-            <tr><td>opencode_url</td><td><code>""</code></td><td>URL explícita do servidor v2. Vazio = descobre pelo serviço selecionado (state dir / <code>opencode service status</code>). Para um servidor diferente (standalone), exporte <code>OPENCODE_PASSWORD</code> no ambiente do gateway.</td></tr>
-            <tr><td>[aliases."&lt;gateway-id&gt;"]</td><td>—</td><td>Alias manual (<code>opencode</code> + <code>display_name</code> / <code>description</code> opcionais). Tem precedência sobre os automáticos; o id precisa conter <code>claude</code>/<code>anthropic</code> para o discovery listar.</td></tr>
-            <tr><td>[disabled] models</td><td><code>[]</code></td><td>Refs (gateway id ou ref <code>provider/model</code>) escondidas de <code>/v1/models</code>.</td></tr>
-            <tr><td>include_free_tier</td><td><code>false</code></td><td>Mostra modelos <code>opencode/*</code> no picker. Usam a credencial OAuth da integração <code>opencode</code>; dão 403 fora do OpenCode — só ative sabendo.</td></tr>
-            <tr><td>desktop_aliases</td><td><code>false</code></td><td>Reescreve o id anunciado para furar a denylist do picker do Desktop (<code>deepseek</code> → <code>d-eepseek</code>, etc.). Só o id muda; refs, display names e resolução intactos.</td></tr>
-            <tr><td>cli_shield_aliases</td><td><code>true</code></td><td>Reescreve o spelling de família nos ids anunciados (<code>claude-sonnet</code> → <code>cs</code>, <code>claude-opus</code> → <code>co</code>) para as chamadas de fundo do Claude Code CLI não caírem nas linhas Copilot.</td></tr>
-            <tr><td>mock_classifier</td><td><code>false</code></td><td>Responde localmente os checks do classificador do auto-mode (e probes de 1 token) do Claude Code, sem consumir cota. Conversas reais continuam indo ao upstream.</td></tr>
-            <tr><td>[tiers."&lt;ref&gt;"]</td><td>—</td><td>Tier de família Anthropic (<code>haiku</code>/<code>sonnet</code>/<code>opus</code>/<code>fable</code>/<code>mythos</code>) anunciado em <code>/v1/models</code> para o Claude Desktop escolher as chamadas de fundo.</td></tr>
-            <tr><td>connect_timeout_secs</td><td><code>30</code></td><td>Timeout de conexão TCP/TLS com o upstream — provedor inalcançável falha rápido.</td></tr>
-            <tr><td>request_timeout_secs</td><td><code>3600</code></td><td>Timeout total, <b>incluindo streaming</b>. Generoso de propósito: turno longo com reasoning fica aberto minutos.</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="translate spec">
-        <div class="translate-h">
-          <span class="tag"><i>cli</i> <span>· ciclo de vida do daemon</span></span>
-        </div>
-        <table>
-          <caption class="sr-only">Flags do CLI</caption>
-          <thead>
-            <tr>
-              <th scope="col">comando</th>
-              <th scope="col">—</th>
-              <th scope="col">o que faz</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td>--start [--port N]</td><td>daemon</td><td>Sobe o filho destacado com <code>--serve</code>, espera <code>/health</code> e imprime os <code>export</code> do Claude Code. Estado em <code>~/.local/share/opencode-claude-gateway/</code> (<code>ocg.pid</code>, <code>ocg.port</code>, <code>ocg.session</code>, <code>ocg.pair</code>, <code>ocg.log</code>, todos 0600).</td></tr>
-            <tr><td>--stop</td><td>daemon</td><td>Envia SIGTERM (drena streams SSE) e limpa o estado.</td></tr>
-            <tr><td>--status</td><td>daemon</td><td>Diz se está rodando, em qual porta, se responde, e se o auto-start está ligado.</td></tr>
-            <tr><td>--enable</td><td>auto-start</td><td>Instala e habilita o systemd user service (sobe no login). Não inicia o gateway agora.</td></tr>
-            <tr><td>--disable</td><td>auto-start</td><td>Remove o auto-start. Não para um gateway que está rodando.</td></tr>
-            <tr><td>--serve</td><td>foreground</td><td>Servidor em primeiro plano (dev + filho do daemon).</td></tr>
-            <tr><td>--refresh</td><td>prévia</td><td>Imprime o catálogo que o boot carregaria (N modelos + aliases) e sai.</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="translate spec">
-        <div class="translate-h">
-          <span class="tag"><i>http</i> <span>· endpoints servidos</span></span>
-        </div>
-        <table>
-          <caption class="sr-only">Endpoints do gateway</caption>
-          <thead>
-            <tr>
-              <th scope="col">endpoint</th>
-              <th scope="col">auth</th>
-              <th scope="col">o que faz</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td>GET /health</td><td>aberto</td><td><code>ok</code> / <code>degraded</code> / <code>starting</code>, contagem de modelos, modelo padrão efetivo e <code>last_error</code> do load no boot.</td></tr>
-            <tr><td>GET /v1/models</td><td>token*</td><td>Aliases <code>claude-&lt;provider&gt;-&lt;model&gt;</code> (+ <code>[1m]</code> quando a janela real ≥ 1M; único sufixo que o Claude Code lê). Alimenta <code>/model</code>.</td></tr>
-            <tr><td>POST /v1/messages</td><td>token*</td><td>Aceita alias, ref direta (<code>provider/model</code>) e id simples; sufixo <code>#variant</code> quando o catálogo declara variantes.</td></tr>
-            <tr><td>POST /v1/messages/count_tokens</td><td>token*</td><td>Pacotes Anthropic: proxy para <code>{baseURL}/messages/count_tokens</code> (com fallback local); demais pacotes: estimativa local por partes.</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="flow">
-        <div>
-          <span class="k">modelos</span>
-          <div class="v">
-            <h3 class="d-m">Automático, manual e janela</h3>
-            <p>Cada modelo habilitado do OpenCode ganha um alias <code class="mono">claude-&lt;provider&gt;-&lt;model&gt;</code> (o prefixo <code class="mono">claude-</code> é obrigatório para o discovery). Linhas com mesmo <code class="mono">provider/model</code> mas <code class="mono">id</code> distinto (ex. <code class="mono">opus-4.8</code> vs <code class="mono">opus-4.8-fast</code>) ganham aliases distintos, com <code class="mono">anthropic-beta</code>/<code class="mono">speed</code> do catálogo repassados.</p>
-            <p>Janelas &lt; 1M e o aviso <code class="mono">"X" isn't described by this version's model catalog</code> não se resolvem no gateway: fixe no Claude Code com <code class="mono">modelOverrides</code> (<code class="mono">behavesAs</code> / <code class="mono">inputWindowHint</code>) ou, em último caso, <code class="mono">CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1</code>.</p>
-          </div>
-        </div>
-        <div>
-          <span class="k">variantes</span>
-          <div class="v">
-            <h3 class="d-m">Sufixo <code class="mono">#variant</code>, traduzido por protocolo</h3>
-            <p>Chat Completions: <code class="mono">reasoning_effort</code> (labels fora do enum, como <code class="mono">xhigh</code>/<code class="mono">max</code>, saturam para <code class="mono">high</code>; <code class="mono">none</code> remove o parâmetro). Responses API: objeto <code class="mono">reasoning</code> + <code class="mono">include</code> declarados. Passthrough Anthropic: <code class="mono">thinking</code> (<code class="mono">adaptive</code> com <code class="mono">display: summarized</code>, ou <code class="mono">disabled</code> para <code class="mono">none</code>). Variante sem representação segura no Messages API retorna <b>400</b>, nunca silêncio.</p>
-          </div>
-        </div>
-        <div>
-          <span class="k">subagentes</span>
-          <div class="v">
-            <h3 class="d-m">Herdam o modelo da sessão — mas não sempre</h3>
-            <p>Sem <code class="mono">model</code> próprio, o subagente usa o modelo da conversa principal (ou do subagente pai). Um agente com <code class="mono">model</code> fixo, uma invocação explícita ou <code class="mono">CLAUDE_CODE_SUBAGENT_MODEL</code> mudam isso. Use <code class="mono">model: inherit</code> para herdar de propósito.</p>
-            <p>Com <code class="mono">CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1</code>, todos usam um id fixo — que <b>não acompanha</b> o <code class="mono">/model</code> da sessão. No ocg, fixe um id exato do <code class="mono">/v1/models</code> para evitar snapshots que o OpenCode não tem. Detalhes na <a href="https://github.com/marcos2872/opencode-claude-gateway/blob/main/docs/config-cli.md#fixando-o-modelo-dos-subagentes">documentação do CLI</a>.</p>
-          </div>
-        </div>
-        <div>
-          <span class="k">tiers</span>
-          <div class="v">
-            <h3 class="d-m">Metadados para o Desktop, não roteamento</h3>
-            <p><code class="mono">[tiers]</code> anuncia <code class="mono">anthropic_family_tier</code> no <code class="mono">/v1/models</code>; o Claude Desktop usa isso para títulos/background (<code class="mono">small_fast</code>). O CLI do Claude Code ignora tiers — para ele, use <code class="mono">ANTHROPIC_DEFAULT_*_MODEL</code>, <code class="mono">ANTHROPIC_SMALL_FAST_MODEL</code> e o <code class="mono">model</code> dos agentes. Veja <a href="https://github.com/marcos2872/opencode-claude-gateway/blob/main/docs/config-desktop.md#tiers-da-fam%C3%ADlia-anthropic">tiers no Desktop</a>.</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="note"><b>Regra de ouro:</b> catálogo é lido <b>uma vez no boot</b> (com até 6 tentativas e backoff 2s → 16s enquanto vier vazio). Sem refresh automático — modelo novo/removido ou <code class="mono">opencode auth</code> novo pede <code class="mono">ocg --stop && ocg --start</code>. <code class="mono">--refresh</code> só pré-visualiza. Credenciais são re-lidas periodicamente e o pareamento é renovado em 401, então rotação de token não exige reiniciar.</div>
-    </div>
-  </section>
-
-  <!-- ————————————————— limites ————————————————— -->
-  <section class="band" id="limites">
-    <div class="wrap">
-      <div class="band-head">
-        <h2 class="d-l">O que o proxy não faz</h2>
-        <p class="lede">Um tradutor honesto diz onde não alcança. Se algo aqui for um problema para você, é melhor saber antes de instalar.</p>
-      </div>
-
-      <div class="limits">
-        <details open>
-          <summary>Nem todo recurso da Messages API tem equivalente</summary>
-          <div class="body">
-            <p>Ferramentas que o provedor não implementa não são inventadas. Recursos exclusivos da Anthropic — como trechos com cache de prompt e busca na web hospedada — só funcionam quando o provedor de destino oferece algo equivalente.</p>
-            <p>Na dúvida, o proxy prefere falhar com um erro claro (sempre no formato <code class="mono">{"type":"error","error":{...}}</code>) a devolver uma resposta silenciosamente diferente do que foi pedido.</p>
-          </div>
-        </details>
-        <details>
-          <summary>Arquivos/PDF e thinking não atravessam todos os protocolos</summary>
-          <div class="body">
-            <p>Blocos <code class="mono">document</code> (PDF/texto) e <code class="mono">thinking</code>/<code class="mono">redacted_thinking</code> são repassados intactos só em modelos Anthropic (passthrough). Nos caminhos Chat Completions e Responses API esses blocos são descartados — é uma limitação de representação do protocolo de destino, não um erro de tradução.</p>
-            <p>Imagens continuam funcionando nos três caminhos: base64, URL e imagens aninhadas em <code class="mono">tool_result</code>. Arquivos de texto lidos por ferramentas (<code class="mono">Read</code> etc.) chegam normalmente como <code class="mono">tool_result</code>.</p>
-          </div>
-        </details>
-        <details>
-          <summary>É um proxy local, não um serviço hospedado</summary>
-          <div class="body">
-            <p>O ocg escuta só em <code class="mono">127.0.0.1</code>, mantém credenciais só em memória (nunca logadas) e, no fallback offline, abre o DB em read-only. O session token de pareamento é cacheado em <code class="mono">ocg.pair</code> <code class="mono">0600</code>. Arquivos de estado (<code class="mono">ocg.pid</code>, <code class="mono">ocg.port</code>, <code class="mono">ocg.session</code>, <code class="mono">ocg.pair</code>, <code class="mono">ocg.log</code>) são criados <code class="mono">0600</code>. Suas chaves e conversas passam por ele, mas ficam entre você e o provedor — nada é enviado para terceiros.</p>
-          </div>
-        </details>
-        <details>
-          <summary>O catálogo congela no boot</summary>
-          <div class="body">
-            <p>Sem refresh periódico: <code class="mono">/health</code> fica <code class="mono">starting</code> até o primeiro load e <code class="mono">degraded</code> se as tentativas esgotarem com 0 modelos. <code class="mono">models: 0</code> logo após o boot costuma ser o serviço do OpenCode ainda aquecendo (<code class="mono">opencode service status</code> + reinicie o gateway). <code class="mono">ocg.log</code> é só-append — trunque de vez em quando.</p>
-          </div>
-        </details>
-        <details>
-          <summary>A qualidade da resposta é do modelo, não da tradução</summary>
-          <div class="body">
-            <p>O proxy garante que a requisição chegue bem formada e que a resposta volte no formato esperado. Ele não equaliza capacidades: um modelo mais fraco em uso de ferramentas continuará mais fraco, mesmo falando fluentemente o dialeto da Anthropic.</p>
-          </div>
-        </details>
-      </div>
-    </div>
-  </section>
 </main>
 
 <footer class="foot">
   <div class="wrap">
     <div class="row">
       <span class="tag"><i>ocg</i> <span>· gateway local · 127.0.0.1:3737</span></span>
-      <span class="tag"><a href="https://github.com/marcos2872/opencode-claude-gateway">código</a> · <a href="#instalar">instalação</a> · <a href="#configurar">configuração</a> · <a href="#limites">limites</a></span>
+      <span class="tag"><a href="https://github.com/marcos2872/opencode-claude-gateway">código</a> · <a href="docs.html">documentação</a> · <a href="docs-instalacao.html">instalação</a> · <a href="docs-erros.html">erros</a></span>
     </div>
     <p class="fine">Projeto independente. Não é afiliado à Anthropic nem ao opencode. Claude e Claude Code são marcas da Anthropic; o opencode é um projeto separado com sua própria licença.</p>
   </div>

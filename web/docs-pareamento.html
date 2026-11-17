@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<!-- Web docs home: the hub the sidebar points from. Same shell as every docs
+     page (sidebar + article), so navigation stays identical across topics. -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pareamento e credenciais — ocg docs</title>
+<meta name="description" content="Documentação do opencode-claude-gateway: instalação, config.toml completo, aliases, modelos, variantes, Claude Code CLI, subagentes, Claude Desktop, tiers, erros e arquitetura.">
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+<link rel="canonical" href="https://marcos2872.github.io/opencode-claude-gateway/docs-pareamento.html">
+<meta name="theme-color" content="#131210">
+<meta property="og:type" content="article">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:url" content="https://marcos2872.github.io/opencode-claude-gateway/docs-pareamento.html">
+<meta property="og:title" content="Documentação — opencode-claude-gateway">
+<meta property="og:description" content="Referência completa: instalação, config.toml, aliases, modelos, variantes, CLI, subagentes, Desktop, tiers, erros e arquitetura.">
+<meta name="twitter:card" content="summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;family=DM+Mono:ital,wght@0,400;0,500;1,400&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Pular para o conteúdo</a>
+<span class="sr-only" id="copy-status" aria-live="polite"></span>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="mark" href="index.html"><img class="mark-icon" src="assets/logo.svg" alt="" width="24" height="24">ocg</a>
+    <nav aria-label="Principal">
+      <a href="index.html">Apresentação</a>
+      <a href="docs.html">Documentação</a>
+      <a class="opt" href="https://github.com/marcos2872/opencode-claude-gateway">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<div class="docs">
+
+  <button class="docs-nav-toggle" type="button" aria-expanded="false" aria-controls="toc">Tópicos</button>
+  <nav class="docs-nav" aria-label="Índice da documentação" id="toc">
+    <span class="k">começando</span>
+    <a href="docs.html">Visão geral</a>
+    <a href="docs-instalacao.html">Instalação</a>
+    <a href="docs-daemon.html">Daemon e CLI</a>
+    <span class="k">gateway</span>
+    <a href="docs-config.html">config.toml</a>
+    <a href="docs-auth.html">Autenticação</a>
+    <a href="docs-pareamento.html">Pareamento e credenciais</a>
+    <a href="docs-modelos.html">Modelos e resolução</a>
+    <a href="docs-aliases.html">Aliases</a>
+    <a href="docs-variantes.html">Variantes</a>
+    <a href="docs-tiers.html">Tiers</a>
+    <span class="k">clientes</span>
+    <a href="docs-cli.html">Claude Code CLI</a>
+    <a href="docs-subagentes.html">Subagentes</a>
+    <a href="docs-janela.html">Janela de contexto</a>
+    <a href="docs-desktop.html">Claude Desktop</a>
+    <span class="k">referência</span>
+    <a href="docs-http.html">Endpoints HTTP</a>
+    <a href="docs-erros.html">Erros e diagnóstico</a>
+    <a href="docs-arquitetura.html">Arquitetura</a>
+  </nav>
+
+  <article class="docs-body">
+    <header class="docs-hero">
+      <div class="docs-top">
+        <span class="tag"><i>05</i> <span>· gateway</span></span>
+        <a class="tag" href="docs.html">índice</a>
+      </div>
+      <h1>Pareamento e credenciais</h1>
+      <p class="docs-lead">O gateway não pede credenciais: pareia com o servidor OpenCode v2 e usa as integrações que já existem na máquina.</p>
+    </header>
+
+    <section id="fluxo">
+      <h2>Fluxo padrão</h2>
+      <p><code class="mono">POST /api/pair</code> pelo CLI já autenticado, seguido de <code class="mono">GET /auth/connect/:code</code> com <code class="mono">Accept: application/json</code>. O session token resultante autentica as leituras com HTTP Basic <code class="mono">opencode:&lt;token&gt;</code>, fica cacheado em <code class="mono">ocg.pair</code> (0600) e é renovado automaticamente em 401.</p>
+      <div class="term">
+        <div class="term-h">
+          <span>config.toml</span>
+          <button class="copy" type="button" data-copy="opencode_pair = true&#10;opencode_url = &quot;&quot;">copiar</button>
+        </div>
+        <pre><span class="c"># default: pareia com o serviço v2 selecionado</span>
+opencode_pair = <span class="s">true</span>
+<span class="c"># vazio = descobre pelo serviço selecionado</span>
+opencode_url = <span class="s">""</span></pre>
+      </div>
+    </section>
+
+    <section id="offline">
+      <h2>Modo offline</h2>
+      <p>Com <code class="mono">opencode_pair = false</code> — ou se o servidor estiver indisponível — o catálogo vem de <code class="mono">opencode api get /api/model</code> e as credenciais da tabela <code class="mono">credential</code> do SQLite, <b>somente leitura</b>. Nunca usa <code class="mono">auth.json</code> como fonte de verdade nem parseia <code class="mono">opencode.jsonc</code>. O caminho do banco vem de <code class="mono">opencode debug paths db</code>.</p>
+    </section>
+
+    <section id="escolha">
+      <h2>Como a credencial é escolhida</h2>
+      <ol>
+        <li><code class="mono">settings.apiKey</code> do catálogo, quando existir;</li>
+        <li>provider → <code class="mono">integrationID</code> (<code class="mono">/api/provider</code>) → credencial ativa (<code class="mono">/api/credential</code>), preferindo a linha ativa da integração;</li>
+        <li>fallback no SQLite;</li>
+        <li>providers locais sem integração (Ollama) não recebem header de auth.</li>
+      </ol>
+      <p>Credenciais ficam em cache por ~30s; a rotação no OpenCode não exige reiniciar o gateway.</p>
+    </section>
+
+    <section id="sessao">
+      <h2>Headers de sessão</h2>
+      <p>Todo forward para o Go envia <code class="mono">x-opencode-session</code>: do <code class="mono">x-claude-code-session-id</code> do cliente, senão do <code class="mono">x-opencode-session</code>, senão de um fallback persistido em <code class="mono">ocg.session</code>.</p>
+      <p>Para um servidor v2 diferente do serviço selecionado (ex.: <code class="mono">opencode serve --standalone</code>), exporte <code class="mono">OPENCODE_PASSWORD</code> no ambiente do gateway antes de subir.</p>
+    </section>
+  </article>
+</div>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="row">
+      <span class="tag"><i>ocg</i> <span>· gateway local · 127.0.0.1:3737</span></span>
+      <span class="tag"><a href="index.html">apresentação</a> · <a href="docs.html">docs</a> · <a href="https://github.com/marcos2872/opencode-claude-gateway">código</a></span>
+    </div>
+    <p class="fine">Projeto independente. Não é afiliado à Anthropic nem ao opencode. Claude e Claude Code são marcas da Anthropic; o opencode é um projeto separado com sua própria licença.</p>
+  </div>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>

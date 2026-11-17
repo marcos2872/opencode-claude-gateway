@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<!-- Web docs home: the hub the sidebar points from. Same shell as every docs
+     page (sidebar + article), so navigation stays identical across topics. -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentação — opencode-claude-gateway</title>
+<meta name="description" content="Documentação do opencode-claude-gateway: instalação, config.toml completo, aliases, modelos, variantes, Claude Code CLI, subagentes, Claude Desktop, tiers, erros e arquitetura.">
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+<link rel="canonical" href="https://marcos2872.github.io/opencode-claude-gateway/docs.html">
+<meta name="theme-color" content="#131210">
+<meta property="og:type" content="article">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:url" content="https://marcos2872.github.io/opencode-claude-gateway/docs.html">
+<meta property="og:title" content="Documentação — opencode-claude-gateway">
+<meta property="og:description" content="Referência completa: instalação, config.toml, aliases, modelos, variantes, CLI, subagentes, Desktop, tiers, erros e arquitetura.">
+<meta name="twitter:card" content="summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;family=DM+Mono:ital,wght@0,400;0,500;1,400&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Pular para o conteúdo</a>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="mark" href="index.html"><img class="mark-icon" src="assets/logo.svg" alt="" width="24" height="24">ocg</a>
+    <nav aria-label="Principal">
+      <a href="index.html">Apresentação</a>
+      <a href="docs.html" aria-current="page">Documentação</a>
+      <a class="opt" href="https://github.com/marcos2872/opencode-claude-gateway">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<div class="docs">
+
+  <button class="docs-nav-toggle" type="button" aria-expanded="false" aria-controls="toc">Tópicos</button>
+  <nav class="docs-nav" aria-label="Índice da documentação" id="toc">
+    <span class="k">começando</span>
+    <a href="docs.html">Visão geral</a>
+    <a href="docs-instalacao.html">Instalação</a>
+    <a href="docs-daemon.html">Daemon e CLI</a>
+    <span class="k">gateway</span>
+    <a href="docs-config.html">config.toml</a>
+    <a href="docs-auth.html">Autenticação</a>
+    <a href="docs-pareamento.html">Pareamento e credenciais</a>
+    <a href="docs-modelos.html">Modelos e resolução</a>
+    <a href="docs-aliases.html">Aliases</a>
+    <a href="docs-variantes.html">Variantes</a>
+    <a href="docs-tiers.html">Tiers</a>
+    <span class="k">clientes</span>
+    <a href="docs-cli.html">Claude Code CLI</a>
+    <a href="docs-subagentes.html">Subagentes</a>
+    <a href="docs-janela.html">Janela de contexto</a>
+    <a href="docs-desktop.html">Claude Desktop</a>
+    <span class="k">referência</span>
+    <a href="docs-http.html">Endpoints HTTP</a>
+    <a href="docs-erros.html">Erros e diagnóstico</a>
+    <a href="docs-arquitetura.html">Arquitetura</a>
+  </nav>
+
+  <article class="docs-body">
+
+    <header class="docs-hero">
+      <div class="docs-top">
+        <span class="tag"><i>docs</i> <span>· referência</span></span>
+        <a class="tag" href="index.html">← apresentação</a>
+      </div>
+      <h1>Documentação</h1>
+      <p class="docs-lead">Tudo o que o <code class="mono">ocg</code> faz e configura, tópico por tópico na barra lateral. Comece pela instalação se é a primeira vez; o <code class="mono">config.toml</code> é a referência do dia a dia.</p>
+    </header>
+
+    <section id="comecar">
+      <h2>Comece por aqui</h2>
+      <div class="docs-cards">
+        <a class="docs-card" href="docs-instalacao.html">
+          <span class="tag"><i>01</i> <span>· começando</span></span>
+          <b>Instalação</b>
+          <p>Baixar o binário, migrar do <code class="mono">frank-opencode</code> e o que é pré-requisito.</p>
+        </a>
+        <a class="docs-card" href="docs-daemon.html">
+          <span class="tag"><i>02</i> <span>· começando</span></span>
+          <b>Daemon e CLI</b>
+          <p><code class="mono">--start</code>, <code class="mono">--stop</code>, auto-start no login, arquivos de estado e logs.</p>
+        </a>
+        <a class="docs-card" href="docs-config.html">
+          <span class="tag"><i>03</i> <span>· gateway</span></span>
+          <b>config.toml</b>
+          <p>Todas as chaves, com padrão e efeito — e onde o arquivo fica.</p>
+        </a>
+        <a class="docs-card" href="docs-cli.html">
+          <span class="tag"><i>04</i> <span>· clientes</span></span>
+          <b>Claude Code CLI</b>
+          <p>Apontar o CLI para o gateway e escolher modelos no <code class="mono">/model</code>.</p>
+        </a>
+        <a class="docs-card" href="docs-aliases.html">
+          <span class="tag"><i>05</i> <span>· gateway</span></span>
+          <b>Aliases</b>
+          <p>O nome que o Claude pede e o modelo que responde — inclusive para as chamadas de fundo.</p>
+        </a>
+        <a class="docs-card" href="docs-erros.html">
+          <span class="tag"><i>06</i> <span>· referência</span></span>
+          <b>Erros e diagnóstico</b>
+          <p><code class="mono">/health</code>, logs por request e a tabela de sintomas.</p>
+        </a>
+      </div>
+    </section>
+
+    <section id="o-que-e">
+      <h2>O que é o ocg</h2>
+      <p>Um gateway local, compatível com a API da Anthropic, que expõe os modelos do <b>OpenCode v2</b> ao Claude Code e ao Claude Desktop. Ele escuta só em <code class="mono">127.0.0.1</code> e nunca fala com a Anthropic: o upstream é o backend Go/Console do OpenCode.</p>
+      <ul>
+        <li><b>Pareia</b> com o serviço local do opencode e reaproveita as credenciais que você já tem.</li>
+        <li><b>Traduz</b> a Messages API para o protocolo de cada modelo — passthrough Anthropic, Chat Completions ou Responses API — e de volta, streaming incluído.</li>
+        <li><b>Resolve</b> o modelo por alias, ref <code class="mono">provider/model</code> ou id simples, com variantes <code class="mono">#variant</code>.</li>
+      </ul>
+      <p>Para a apresentação visual e o diagrama da tradução, volte à <a href="index.html">página inicial</a>. Os mesmos textos existem em Markdown em <code class="mono">docs/</code>, no repositório.</p>
+    </section>
+
+  </article>
+</div>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="row">
+      <span class="tag"><i>ocg</i> <span>· gateway local · 127.0.0.1:3737</span></span>
+      <span class="tag"><a href="index.html">apresentação</a> · <a href="https://github.com/marcos2872/opencode-claude-gateway">código</a> · <a href="https://github.com/marcos2872/opencode-claude-gateway/tree/main/docs">docs/ (markdown)</a></span>
+    </div>
+    <p class="fine">Projeto independente. Não é afiliado à Anthropic nem ao opencode. Claude e Claude Code são marcas da Anthropic; o opencode é um projeto separado com sua própria licença.</p>
+  </div>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>

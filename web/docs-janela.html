@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<!-- Web docs home: the hub the sidebar points from. Same shell as every docs
+     page (sidebar + article), so navigation stays identical across topics. -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Janela de contexto — ocg docs</title>
+<meta name="description" content="Documentação do opencode-claude-gateway: instalação, config.toml completo, aliases, modelos, variantes, Claude Code CLI, subagentes, Claude Desktop, tiers, erros e arquitetura.">
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+<link rel="canonical" href="https://marcos2872.github.io/opencode-claude-gateway/docs-janela.html">
+<meta name="theme-color" content="#131210">
+<meta property="og:type" content="article">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:url" content="https://marcos2872.github.io/opencode-claude-gateway/docs-janela.html">
+<meta property="og:title" content="Documentação — opencode-claude-gateway">
+<meta property="og:description" content="Referência completa: instalação, config.toml, aliases, modelos, variantes, CLI, subagentes, Desktop, tiers, erros e arquitetura.">
+<meta name="twitter:card" content="summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;family=DM+Mono:ital,wght@0,400;0,500;1,400&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Pular para o conteúdo</a>
+<span class="sr-only" id="copy-status" aria-live="polite"></span>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="mark" href="index.html"><img class="mark-icon" src="assets/logo.svg" alt="" width="24" height="24">ocg</a>
+    <nav aria-label="Principal">
+      <a href="index.html">Apresentação</a>
+      <a href="docs.html">Documentação</a>
+      <a class="opt" href="https://github.com/marcos2872/opencode-claude-gateway">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<div class="docs">
+
+  <button class="docs-nav-toggle" type="button" aria-expanded="false" aria-controls="toc">Tópicos</button>
+  <nav class="docs-nav" aria-label="Índice da documentação" id="toc">
+    <span class="k">começando</span>
+    <a href="docs.html">Visão geral</a>
+    <a href="docs-instalacao.html">Instalação</a>
+    <a href="docs-daemon.html">Daemon e CLI</a>
+    <span class="k">gateway</span>
+    <a href="docs-config.html">config.toml</a>
+    <a href="docs-auth.html">Autenticação</a>
+    <a href="docs-pareamento.html">Pareamento e credenciais</a>
+    <a href="docs-modelos.html">Modelos e resolução</a>
+    <a href="docs-aliases.html">Aliases</a>
+    <a href="docs-variantes.html">Variantes</a>
+    <a href="docs-tiers.html">Tiers</a>
+    <span class="k">clientes</span>
+    <a href="docs-cli.html">Claude Code CLI</a>
+    <a href="docs-subagentes.html">Subagentes</a>
+    <a href="docs-janela.html">Janela de contexto</a>
+    <a href="docs-desktop.html">Claude Desktop</a>
+    <span class="k">referência</span>
+    <a href="docs-http.html">Endpoints HTTP</a>
+    <a href="docs-erros.html">Erros e diagnóstico</a>
+    <a href="docs-arquitetura.html">Arquitetura</a>
+  </nav>
+
+  <article class="docs-body">
+    <header class="docs-hero">
+      <div class="docs-top">
+        <span class="tag"><i>12</i> <span>· clientes</span></span>
+        <a class="tag" href="docs.html">índice</a>
+      </div>
+      <h1>Janela de contexto</h1>
+      <p class="docs-lead">O gateway anuncia a janela do catálogo (<code class="mono">limit.context</code>) como <code class="mono">context_window</code> e, para janelas ≥ 1M, como sufixo <code class="mono">[1m]</code> no id — o único que a mainline do Claude Code lê.</p>
+    </header>
+
+    <section id="limite">
+      <h2>O que o gateway não resolve</h2>
+      <p>Janelas <b>abaixo</b> de 1M e o aviso <code class="mono">"X" isn't described by this version's model catalog</code> não são resolvidos pelo gateway: ids sintéticos não constam do catálogo embutido do CLI, que assume 200k. Defina a janela no lado do Claude Code.</p>
+    </section>
+
+    <section id="overrides">
+      <h2><code class="mono">modelOverrides</code></h2>
+      <div class="term">
+        <div class="term-h">
+          <span>~/.claude/settings.json</span>
+          <button class="copy" type="button" data-copy='{&quot;env&quot;: {&quot;ANTHROPIC_BASE_URL&quot;: &quot;http://127.0.0.1:3737&quot;, &quot;ANTHROPIC_AUTH_TOKEN&quot;: &quot;dummy&quot;}, &quot;modelOverrides&quot;: {&quot;claude-opencode-go-kimi-k2-7-code&quot;: {&quot;behavesAs&quot;: &quot;claude-sonnet-4-5&quot;, &quot;inputWindowHint&quot;: 262144}}}'>copiar</button>
+        </div>
+        <pre>{
+  <span class="s">"env"</span>: {
+    <span class="s">"ANTHROPIC_BASE_URL"</span>: <span class="c">"http://127.0.0.1:3737"</span>,
+    <span class="s">"ANTHROPIC_AUTH_TOKEN"</span>: <span class="c">"dummy"</span>
+  },
+  <span class="s">"modelOverrides"</span>: {
+    <span class="s">"claude-opencode-go-kimi-k2-7-code"</span>: {
+      <span class="s">"behavesAs"</span>: <span class="c">"claude-sonnet-4-5"</span>,   <span class="c">// herda janela/uso do Claude mais próximo</span>
+      <span class="s">"inputWindowHint"</span>: <span class="c">262144</span>          <span class="c">// ou fixe a janela em tokens</span>
+    }
+  }
+}</pre>
+      </div>
+      <p>Alternativas: sufixar manualmente <code class="mono">"model": "claude-...[1m]"</code> (só para janelas de 1M — o gateway remove o sufixo ao resolver) ou, como último recurso, <code class="mono">CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1</code>, que desliga a checagem para ids desconhecidos ao custo da conta real de tokens.</p>
+    </section>
+
+    <section id="verificar">
+      <h2>Verificar</h2>
+      <div class="term">
+        <div class="term-h">
+          <span>shell</span>
+          <button class="copy" type="button" data-copy="curl -s http://127.0.0.1:3737/v1/models | jq '.data[] | {id, context_window}'">copiar</button>
+        </div>
+        <pre><span class="c">$</span> curl -s http://127.0.0.1:3737/v1/models \
+    | jq <span class="s">'.data[] | {id, context_window}'</span></pre>
+      </div>
+    </section>
+  </article>
+</div>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="row">
+      <span class="tag"><i>ocg</i> <span>· gateway local · 127.0.0.1:3737</span></span>
+      <span class="tag"><a href="index.html">apresentação</a> · <a href="docs.html">docs</a> · <a href="https://github.com/marcos2872/opencode-claude-gateway">código</a></span>
+    </div>
+    <p class="fine">Projeto independente. Não é afiliado à Anthropic nem ao opencode. Claude e Claude Code são marcas da Anthropic; o opencode é um projeto separado com sua própria licença.</p>
+  </div>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>

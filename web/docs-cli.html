@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<!-- Web docs home: the hub the sidebar points from. Same shell as every docs
+     page (sidebar + article), so navigation stays identical across topics. -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code CLI — ocg docs</title>
+<meta name="description" content="Documentação do opencode-claude-gateway: instalação, config.toml completo, aliases, modelos, variantes, Claude Code CLI, subagentes, Claude Desktop, tiers, erros e arquitetura.">
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+<link rel="canonical" href="https://marcos2872.github.io/opencode-claude-gateway/docs-cli.html">
+<meta name="theme-color" content="#131210">
+<meta property="og:type" content="article">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:url" content="https://marcos2872.github.io/opencode-claude-gateway/docs-cli.html">
+<meta property="og:title" content="Documentação — opencode-claude-gateway">
+<meta property="og:description" content="Referência completa: instalação, config.toml, aliases, modelos, variantes, CLI, subagentes, Desktop, tiers, erros e arquitetura.">
+<meta name="twitter:card" content="summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;family=DM+Mono:ital,wght@0,400;0,500;1,400&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Pular para o conteúdo</a>
+<span class="sr-only" id="copy-status" aria-live="polite"></span>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="mark" href="index.html"><img class="mark-icon" src="assets/logo.svg" alt="" width="24" height="24">ocg</a>
+    <nav aria-label="Principal">
+      <a href="index.html">Apresentação</a>
+      <a href="docs.html">Documentação</a>
+      <a class="opt" href="https://github.com/marcos2872/opencode-claude-gateway">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<div class="docs">
+
+  <button class="docs-nav-toggle" type="button" aria-expanded="false" aria-controls="toc">Tópicos</button>
+  <nav class="docs-nav" aria-label="Índice da documentação" id="toc">
+    <span class="k">começando</span>
+    <a href="docs.html">Visão geral</a>
+    <a href="docs-instalacao.html">Instalação</a>
+    <a href="docs-daemon.html">Daemon e CLI</a>
+    <span class="k">gateway</span>
+    <a href="docs-config.html">config.toml</a>
+    <a href="docs-auth.html">Autenticação</a>
+    <a href="docs-pareamento.html">Pareamento e credenciais</a>
+    <a href="docs-modelos.html">Modelos e resolução</a>
+    <a href="docs-aliases.html">Aliases</a>
+    <a href="docs-variantes.html">Variantes</a>
+    <a href="docs-tiers.html">Tiers</a>
+    <span class="k">clientes</span>
+    <a href="docs-cli.html">Claude Code CLI</a>
+    <a href="docs-subagentes.html">Subagentes</a>
+    <a href="docs-janela.html">Janela de contexto</a>
+    <a href="docs-desktop.html">Claude Desktop</a>
+    <span class="k">referência</span>
+    <a href="docs-http.html">Endpoints HTTP</a>
+    <a href="docs-erros.html">Erros e diagnóstico</a>
+    <a href="docs-arquitetura.html">Arquitetura</a>
+  </nav>
+
+  <article class="docs-body">
+    <header class="docs-hero">
+      <div class="docs-top">
+        <span class="tag"><i>10</i> <span>· clientes</span></span>
+        <a class="tag" href="docs.html">índice</a>
+      </div>
+      <h1>Claude Code CLI</h1>
+      <p class="docs-lead">Três variáveis e o CLI fala com o gateway. O modelo é escolhido no <code class="mono">/model</code>, alimentado pelo <code class="mono">/v1/models</code>.</p>
+    </header>
+
+    <section id="env">
+      <h2>Variáveis de ambiente</h2>
+      <div class="term">
+        <div class="term-h">
+          <span>shell — sessão atual</span>
+          <button class="copy" type="button" data-copy="export ANTHROPIC_BASE_URL=http://127.0.0.1:3737&#10;export ANTHROPIC_AUTH_TOKEN=dummy&#10;export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1&#10;claude">copiar</button>
+        </div>
+        <pre><span class="k">export</span> ANTHROPIC_BASE_URL=<span class="s">http://127.0.0.1:3737</span>
+<span class="k">export</span> ANTHROPIC_AUTH_TOKEN=<span class="s">dummy</span>
+<span class="k">export</span> CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=<span class="s">1</span>  <span class="c"># habilita entradas no /model</span>
+claude</pre>
+      </div>
+      <p><code class="mono">ANTHROPIC_AUTH_TOKEN</code> é a <b>credencial do gateway</b> (<code class="mono">auth_token</code>), não uma chave da Anthropic. Por padrão o gateway aceita qualquer valor em loopback, então <code class="mono">dummy</code> basta; se <code class="mono">auth_token</code> estiver setado, o valor precisa ser igual.</p>
+    </section>
+
+    <section id="settings">
+      <h2>Persistir em <code class="mono">settings.json</code></h2>
+      <div class="term">
+        <div class="term-h">
+          <span>~/.claude/settings.json — escopo do usuário</span>
+          <button class="copy" type="button" data-copy='{&quot;env&quot;: {&quot;ANTHROPIC_BASE_URL&quot;: &quot;http://127.0.0.1:3737&quot;, &quot;ANTHROPIC_AUTH_TOKEN&quot;: &quot;dummy&quot;, &quot;CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY&quot;: &quot;1&quot;}}'>copiar</button>
+        </div>
+        <pre>{
+  <span class="s">"env"</span>: {
+    <span class="s">"ANTHROPIC_BASE_URL"</span>: <span class="c">"http://127.0.0.1:3737"</span>,
+    <span class="s">"ANTHROPIC_AUTH_TOKEN"</span>: <span class="c">"dummy"</span>,
+    <span class="s">"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"</span>: <span class="c">"1"</span>
+  }
+}</pre>
+      </div>
+      <p>Se já existe um <code class="mono">ANTHROPIC_BASE_URL</code> nesse arquivo apontando para outro backend, o <code class="mono">env</code> do arquivo vence os <code class="mono">export</code> do shell. Para usar o gateway só numa sessão, passe um settings temporário: <code class="mono">claude --settings '{"env":{…}}'</code> — o <code class="mono">--settings</code> tem precedência.</p>
+    </section>
+
+    <section id="discovery">
+      <h2>Descoberta de modelos</h2>
+      <p>O <code class="mono">/model</code> lê o <code class="mono">GET /v1/models</code>. A descoberta só mantém ids contendo <code class="mono">claude</code>/<code class="mono">anthropic</code> — os aliases automáticos já contêm. Janelas ≥ 1M aparecem como <code class="mono">claude-...[1m]</code>; selecione exatamente a forma anunciada, senão o picker mostra <code class="mono">Custom model</code> (funciona na API, mas sem nome).</p>
+    </section>
+
+    <section id="shield">
+      <h2>Ids blindados e chamadas de fundo</h2>
+      <p>O CLI resolve modelos de fundo (small-fast e fallbacks de família) <b>canonicando os ids descobertos por substring</b>. Na prática, as linhas do Copilot são as primeiras em ordem alfabética e casam <code class="mono">claude-sonnet-5</code>, então side queries caem nelas — daí o <code class="mono">429 quota exceeded</code> com <code class="mono">max_tokens: 64000</code> e <code class="mono">tools: []</code> sem você ter escolhido o Copilot.</p>
+      <p>Com <code class="mono">cli_shield_aliases = true</code> (padrão) o gateway reescreve o spelling de família nos ids anunciados — <code class="mono">claude-github-copilot-claude-sonnet-5</code> vira <code class="mono">claude-github-copilot-cs-5</code> — sem tocar em refs, display names ou resolução. A ref direta continua funcionando para usar o Copilot de propósito.</p>
+      <p><b>Opt-out:</b> <code class="mono">cli_shield_aliases = false</code> mantém o spelling antigo, útil se algum fluxo externo depende dos ids históricos.</p>
+      <p><b>Complemento:</b> fixe o small-fast no modelo barato para o background nunca consultar a família por fallback:</p>
+      <div class="term">
+        <div class="term-h">
+          <span>~/.claude/settings.json — env</span>
+          <button class="copy" type="button" data-copy='{&quot;env&quot;: {&quot;ANTHROPIC_SMALL_FAST_MODEL&quot;: &quot;claude-opencode-go-muse-spark-1-3-contributor[1m]&quot;, &quot;ANTHROPIC_DEFAULT_OPUS_MODEL&quot;: &quot;claude-opencode-go-deepseek-v4-1-flash&quot;, &quot;ANTHROPIC_DEFAULT_SONNET_MODEL&quot;: &quot;claude-opencode-go-glm-5-3-flash&quot;, &quot;ANTHROPIC_DEFAULT_HAIKU_MODEL&quot;: &quot;claude-opencode-go-muse-spark-1-3-contributor&quot;}}'>copiar</button>
+        </div>
+        <pre>{
+  <span class="s">"env"</span>: {
+    <span class="s">"ANTHROPIC_SMALL_FAST_MODEL"</span>: <span class="c">"claude-opencode-go-muse-spark-1-3-contributor[1m]"</span>,
+    <span class="s">"ANTHROPIC_DEFAULT_OPUS_MODEL"</span>: <span class="c">"claude-opencode-go-deepseek-v4-1-flash"</span>,
+    <span class="s">"ANTHROPIC_DEFAULT_SONNET_MODEL"</span>: <span class="c">"claude-opencode-go-glm-5-3-flash"</span>,
+    <span class="s">"ANTHROPIC_DEFAULT_HAIKU_MODEL"</span>: <span class="c">"claude-opencode-go-muse-spark-1-3-contributor"</span>
+  }
+}</pre>
+      </div>
+      <p>Para prender de vez os ids de primeira parte, veja a receita de <a href="docs-aliases.html">Aliases</a>.</p>
+    </section>
+
+    <section id="verificar">
+      <h2>Verificar antes de abrir o CLI</h2>
+      <div class="term">
+        <div class="term-h">
+          <span>shell</span>
+          <button class="copy" type="button" data-copy="curl -s http://127.0.0.1:3737/health            # status ok e models != 0&#10;curl -s http://127.0.0.1:3737/v1/models | jq -r '.data[].id' | sort&#10;curl -s -X POST http://127.0.0.1:3737/v1/messages \&#10;  -H 'content-type: application/json' \&#10;  -d '{&quot;model&quot;:&quot;claude-opencode-go-glm-5-3-flash&quot;,&quot;max_tokens&quot;:64,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;Say hi&quot;}]}'">copiar</button>
+        </div>
+        <pre><span class="c"># 0. catálogo carregado?</span>
+<span class="c">$</span> curl -s http://127.0.0.1:3737/health            <span class="c"># ok e models != 0</span>
+<span class="c">$</span> curl -s http://127.0.0.1:3737/v1/models | jq -r <span class="s">'.data[].id'</span> | sort
+<span class="c"># 1. chat de ponta a ponta</span>
+<span class="c">$</span> curl -s -X POST http://127.0.0.1:3737/v1/messages \
+    -H <span class="s">'content-type: application/json'</span> \
+    -d <span class="s">'{"model":"claude-opencode-go-glm-5-3-flash","max_tokens":64,"messages":[{"role":"user","content":"Say hi"}]}'</span></pre>
+      </div>
+      <p><code class="mono">/status</code> dentro do Claude Code deve mostrar a sua base URL.</p>
+    </section>
+  </article>
+</div>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="row">
+      <span class="tag"><i>ocg</i> <span>· gateway local · 127.0.0.1:3737</span></span>
+      <span class="tag"><a href="index.html">apresentação</a> · <a href="docs.html">docs</a> · <a href="https://github.com/marcos2872/opencode-claude-gateway">código</a></span>
+    </div>
+    <p class="fine">Projeto independente. Não é afiliado à Anthropic nem ao opencode. Claude e Claude Code são marcas da Anthropic; o opencode é um projeto separado com sua própria licença.</p>
+  </div>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>

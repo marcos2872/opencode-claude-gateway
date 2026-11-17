@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<!-- Web docs home: the hub the sidebar points from. Same shell as every docs
+     page (sidebar + article), so navigation stays identical across topics. -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Instalação — ocg docs</title>
+<meta name="description" content="Documentação do opencode-claude-gateway: instalação, config.toml completo, aliases, modelos, variantes, Claude Code CLI, subagentes, Claude Desktop, tiers, erros e arquitetura.">
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+<link rel="canonical" href="https://marcos2872.github.io/opencode-claude-gateway/docs-instalacao.html">
+<meta name="theme-color" content="#131210">
+<meta property="og:type" content="article">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:url" content="https://marcos2872.github.io/opencode-claude-gateway/docs-instalacao.html">
+<meta property="og:title" content="Documentação — opencode-claude-gateway">
+<meta property="og:description" content="Referência completa: instalação, config.toml, aliases, modelos, variantes, CLI, subagentes, Desktop, tiers, erros e arquitetura.">
+<meta name="twitter:card" content="summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;family=DM+Mono:ital,wght@0,400;0,500;1,400&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Pular para o conteúdo</a>
+<span class="sr-only" id="copy-status" aria-live="polite"></span>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="mark" href="index.html"><img class="mark-icon" src="assets/logo.svg" alt="" width="24" height="24">ocg</a>
+    <nav aria-label="Principal">
+      <a href="index.html">Apresentação</a>
+      <a href="docs.html">Documentação</a>
+      <a class="opt" href="https://github.com/marcos2872/opencode-claude-gateway">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<div class="docs">
+
+  <button class="docs-nav-toggle" type="button" aria-expanded="false" aria-controls="toc">Tópicos</button>
+  <nav class="docs-nav" aria-label="Índice da documentação" id="toc">
+    <span class="k">começando</span>
+    <a href="docs.html">Visão geral</a>
+    <a href="docs-instalacao.html">Instalação</a>
+    <a href="docs-daemon.html">Daemon e CLI</a>
+    <span class="k">gateway</span>
+    <a href="docs-config.html">config.toml</a>
+    <a href="docs-auth.html">Autenticação</a>
+    <a href="docs-pareamento.html">Pareamento e credenciais</a>
+    <a href="docs-modelos.html">Modelos e resolução</a>
+    <a href="docs-aliases.html">Aliases</a>
+    <a href="docs-variantes.html">Variantes</a>
+    <a href="docs-tiers.html">Tiers</a>
+    <span class="k">clientes</span>
+    <a href="docs-cli.html">Claude Code CLI</a>
+    <a href="docs-subagentes.html">Subagentes</a>
+    <a href="docs-janela.html">Janela de contexto</a>
+    <a href="docs-desktop.html">Claude Desktop</a>
+    <span class="k">referência</span>
+    <a href="docs-http.html">Endpoints HTTP</a>
+    <a href="docs-erros.html">Erros e diagnóstico</a>
+    <a href="docs-arquitetura.html">Arquitetura</a>
+  </nav>
+
+  <article class="docs-body">
+    <header class="docs-hero">
+      <div class="docs-top">
+        <span class="tag"><i>01</i> <span>· começando</span></span>
+        <a class="tag" href="docs.html">índice</a>
+      </div>
+      <h1>Instalação</h1>
+      <p class="docs-lead">O ocg é um único binário. O que ele precisa de verdade é de um <b>OpenCode v2 já autenticado</b> — o gateway reaproveita esse login em vez de pedir credenciais de novo.</p>
+    </header>
+
+    <section id="pre">
+      <h2>Pré-requisitos</h2>
+      <ul>
+        <li><b>OpenCode v2</b> instalado e logado (<code class="mono">opencode auth login</code>). É ele quem autentica no Console e fornece o catálogo de modelos.</li>
+        <li><code class="mono">curl</code> e, opcionalmente, o <code class="mono">gh</code> CLI para baixar o binário.</li>
+      </ul>
+    </section>
+
+    <section id="release">
+      <h2>Binário da release</h2>
+      <div class="term">
+        <div class="term-h">
+          <span>shell</span>
+          <button class="copy" type="button" data-copy="URL=$(gh release view --repo marcos2872/opencode-claude-gateway --json assets --jq '.assets[] | select(.name==&quot;ocg-linux-x86_64&quot;) | .url')&#10;curl -L &quot;$URL&quot; -o /tmp/ocg&#10;install -m 0755 /tmp/ocg ~/.local/bin/ocg&#10;ocg --version">copiar</button>
+        </div>
+        <pre><span class="c"># 1. URL do binário mais recente</span>
+<span class="c">$</span> URL=$(gh release view --repo marcos2872/opencode-claude-gateway --json assets \
+      --jq <span class="s">'.assets[] | select(.name=="ocg-linux-x86_64") | .url'</span>)
+<span class="c"># 2. baixe, torne executável e mova para o PATH</span>
+<span class="c">$</span> curl -L <span class="s">"$URL"</span> -o /tmp/ocg
+<span class="c">$</span> install -m 0755 /tmp/ocg ~/.local/bin/ocg
+<span class="c"># 3. confira</span>
+<span class="c">$</span> <span class="k">ocg</span> --version</pre>
+      </div>
+      <p>Sem <code class="mono">gh</code>, copie o link direto da página da release no GitHub.</p>
+    </section>
+
+    <section id="cargo">
+      <h2>A partir do código</h2>
+      <div class="term">
+        <div class="term-h">
+          <span>shell</span>
+          <button class="copy" type="button" data-copy="cargo install --path .&#10;# ou&#10;cargo install --git https://github.com/marcos2872/opencode-claude-gateway">copiar</button>
+        </div>
+        <pre><span class="c"># no clone do repositório</span>
+<span class="c">$</span> <span class="k">cargo</span> install --path .
+<span class="c"># ou direto do git</span>
+<span class="c">$</span> <span class="k">cargo</span> install --git https://github.com/marcos2872/opencode-claude-gateway</pre>
+      </div>
+    </section>
+
+    <section id="primeiro">
+      <h2>Primeiro run</h2>
+      <p>O primeiro run cria <code class="mono">~/.config/opencode-claude-gateway/config.toml</code> com todas as opções comentadas. Depois:</p>
+      <div class="term">
+        <div class="term-h">
+          <span>shell</span>
+          <button class="copy" type="button" data-copy="ocg --start&#10;ocg --status&#10;curl -s http://127.0.0.1:3737/health">copiar</button>
+        </div>
+        <pre><span class="c">$</span> <span class="k">ocg</span> --start
+<span class="c">$</span> <span class="k">ocg</span> --status
+<span class="c">$</span> curl -s http://127.0.0.1:3737/health</pre>
+      </div>
+      <p>A seguir, aponte seu cliente: <a href="docs-cli.html">Claude Code CLI</a> ou <a href="docs-desktop.html">Claude Desktop</a>.</p>
+    </section>
+
+    <section id="migrar">
+      <h2>Migrando do <code class="mono">frank-opencode</code></h2>
+      <p>Troca limpa, sem fallback: pare o daemon antigo, mova o config e suba o novo.</p>
+      <div class="term">
+        <div class="term-h">
+          <span>shell</span>
+          <button class="copy" type="button" data-copy="frank-opencode --disable&#10;mkdir -p ~/.config/opencode-claude-gateway&#10;mv ~/.config/frank-opencode/config.toml ~/.config/opencode-claude-gateway/config.toml&#10;ocg --start">copiar</button>
+        </div>
+        <pre><span class="c">$</span> frank-opencode --disable
+<span class="c">$</span> mkdir -p ~/.config/opencode-claude-gateway
+<span class="c">$</span> mv ~/.config/frank-opencode/config.toml ~/.config/opencode-claude-gateway/config.toml
+<span class="c">$</span> <span class="k">ocg</span> --start</pre>
+      </div>
+      <p><code class="mono">FRANK_PORT</code>/<code class="mono">FRANK_CONFIG</code>/<code class="mono">FRANK_AUTH_TOKEN</code> viraram <code class="mono">OCG_*</code>; o state mudou de <code class="mono">~/.local/share/frank-opencode/</code> para <code class="mono">~/.local/share/opencode-claude-gateway/</code>.</p>
+    </section>
+  </article>
+</div>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="row">
+      <span class="tag"><i>ocg</i> <span>· gateway local · 127.0.0.1:3737</span></span>
+      <span class="tag"><a href="index.html">apresentação</a> · <a href="docs.html">docs</a> · <a href="https://github.com/marcos2872/opencode-claude-gateway">código</a></span>
+    </div>
+    <p class="fine">Projeto independente. Não é afiliado à Anthropic nem ao opencode. Claude e Claude Code são marcas da Anthropic; o opencode é um projeto separado com sua própria licença.</p>
+  </div>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>

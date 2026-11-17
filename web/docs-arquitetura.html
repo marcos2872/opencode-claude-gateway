@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<!-- Web docs home: the hub the sidebar points from. Same shell as every docs
+     page (sidebar + article), so navigation stays identical across topics. -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arquitetura — ocg docs</title>
+<meta name="description" content="Documentação do opencode-claude-gateway: instalação, config.toml completo, aliases, modelos, variantes, Claude Code CLI, subagentes, Claude Desktop, tiers, erros e arquitetura.">
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+<link rel="canonical" href="https://marcos2872.github.io/opencode-claude-gateway/docs-arquitetura.html">
+<meta name="theme-color" content="#131210">
+<meta property="og:type" content="article">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:url" content="https://marcos2872.github.io/opencode-claude-gateway/docs-arquitetura.html">
+<meta property="og:title" content="Documentação — opencode-claude-gateway">
+<meta property="og:description" content="Referência completa: instalação, config.toml, aliases, modelos, variantes, CLI, subagentes, Desktop, tiers, erros e arquitetura.">
+<meta name="twitter:card" content="summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;family=DM+Mono:ital,wght@0,400;0,500;1,400&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Pular para o conteúdo</a>
+<span class="sr-only" id="copy-status" aria-live="polite"></span>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="mark" href="index.html"><img class="mark-icon" src="assets/logo.svg" alt="" width="24" height="24">ocg</a>
+    <nav aria-label="Principal">
+      <a href="index.html">Apresentação</a>
+      <a href="docs.html">Documentação</a>
+      <a class="opt" href="https://github.com/marcos2872/opencode-claude-gateway">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<div class="docs">
+
+  <button class="docs-nav-toggle" type="button" aria-expanded="false" aria-controls="toc">Tópicos</button>
+  <nav class="docs-nav" aria-label="Índice da documentação" id="toc">
+    <span class="k">começando</span>
+    <a href="docs.html">Visão geral</a>
+    <a href="docs-instalacao.html">Instalação</a>
+    <a href="docs-daemon.html">Daemon e CLI</a>
+    <span class="k">gateway</span>
+    <a href="docs-config.html">config.toml</a>
+    <a href="docs-auth.html">Autenticação</a>
+    <a href="docs-pareamento.html">Pareamento e credenciais</a>
+    <a href="docs-modelos.html">Modelos e resolução</a>
+    <a href="docs-aliases.html">Aliases</a>
+    <a href="docs-variantes.html">Variantes</a>
+    <a href="docs-tiers.html">Tiers</a>
+    <span class="k">clientes</span>
+    <a href="docs-cli.html">Claude Code CLI</a>
+    <a href="docs-subagentes.html">Subagentes</a>
+    <a href="docs-janela.html">Janela de contexto</a>
+    <a href="docs-desktop.html">Claude Desktop</a>
+    <span class="k">referência</span>
+    <a href="docs-http.html">Endpoints HTTP</a>
+    <a href="docs-erros.html">Erros e diagnóstico</a>
+    <a href="docs-arquitetura.html">Arquitetura</a>
+  </nav>
+
+  <article class="docs-body">
+    <header class="docs-hero">
+      <div class="docs-top">
+        <span class="tag"><i>16</i> <span>· referência</span></span>
+        <a class="tag" href="docs.html">índice</a>
+      </div>
+      <h1>Arquitetura</h1>
+      <p class="docs-lead">Um gateway local compatível com Anthropic que expõe os modelos do OpenCode v2. Escuta apenas em <code class="mono">127.0.0.1</code> e nunca fala com a Anthropic — o upstream é o backend Go/Console do OpenCode, roteado pelo pacote do provider.</p>
+    </header>
+
+    <section id="fluxo">
+      <h2>Fluxo de uma requisição</h2>
+      <ol>
+        <li><b>resolve</b> — alias → <code class="mono">provider/model</code> → id simples, com validação de variante.</li>
+        <li><b>escolhe o forward</b> — <code class="mono">protocol_for_entry</code> (o <code class="mono">settings.endpoint</code> do catálogo pode sobrescrever o pacote em catálogos mistos).</li>
+        <li><b>traduz</b> — Anthropic ↔ Chat Completions ou Anthropic ↔ Responses; passthrough quando o pacote já fala Anthropic.</li>
+        <li><b>merge dos defaults do catálogo</b> — <code class="mono">headers</code> e <code class="mono">body</code> por modelo (ex. beta de fast-mode, <code class="mono">speed</code>).</li>
+        <li><b>aplica a variante</b> — sobre o corpo já traduzido.</li>
+        <li><b>forward</b> — <code class="mono">Bearer</code> da credencial resolvida + headers de sessão (<code class="mono">x-opencode-session</code> sempre).</li>
+      </ol>
+    </section>
+
+    <section id="camadas">
+      <h2>Camadas</h2>
+      <h3><code class="mono">domain/</code></h3>
+      <p>Tipos e regras puras, sem async: <code class="mono">model.rs</code> (<code class="mono">ModelRef</code>), <code class="mono">catalog.rs</code> (<code class="mono">CatalogEntry</code> — variantes, headers/body por modelo, limites de contexto), <code class="mono">protocol.rs</code> (<code class="mono">protocol_for_entry</code>) e <code class="mono">alias.rs</code> (aliases automáticos, shield de família, evasão da denylist, <code class="mono">strip_window_suffix</code>).</p>
+      <h3><code class="mono">infra/pair.rs</code></h3>
+      <p>Cliente da API v2: pareamento, session token em <code class="mono">ocg.pair</code> (0600), renovação em 401 e leitura de <code class="mono">/api/model</code>, <code class="mono">/api/provider</code> e <code class="mono">/api/credential</code>. Fallback offline em <code class="mono">infra/opencode.rs</code> (CLI + SQLite read-only).</p>
+      <h3><code class="mono">infra/upstream/</code></h3>
+      <p>Tradutores puros, sem HTTP:</p>
+      <ul>
+        <li><code class="mono">chat.rs</code>, <code class="mono">responses.rs</code> — corpo nos dois sentidos;</li>
+        <li><code class="mono">stream.rs</code> — SSE do provedor → SSE da Anthropic;</li>
+        <li><code class="mono">variant.rs</code> — merge da variante por protocolo;</li>
+        <li><code class="mono">shared.rs</code> — shaping comum, <code class="mono">floor_output_tokens</code> e <code class="mono">cached_input_tokens</code>;</li>
+        <li><code class="mono">estimate.rs</code> — contagem local para <code class="mono">count_tokens</code>;</li>
+        <li><code class="mono">heartbeat.rs</code> — <code class="mono">event: ping</code> durante o silêncio e frames de erro.</li>
+      </ul>
+      <h3><code class="mono">api/</code></h3>
+      <p>Handlers Axum. <code class="mono">server.rs</code> liga as rotas; o trabalho vive nos irmãos: <code class="mono">state.rs</code> (catálogo + aliases, <code class="mono">resolve</code>, <code class="mono">effective_default</code>, <code class="mono">bearer_for</code>), <code class="mono">forward.rs</code> (um por protocolo), <code class="mono">count_tokens.rs</code>, <code class="mono">mock.rs</code>, <code class="mono">session.rs</code> e <code class="mono">errors.rs</code>.</p>
+    </section>
+
+    <section id="limites">
+      <h2>Limites conhecidos</h2>
+      <ul>
+        <li><b>Catálogo congelado no boot</b> — modelo novo/removido exige reiniciar; <code class="mono">--refresh</code> só pré-visualiza.</li>
+        <li><b>Blocos <code class="mono">document</code> e <code class="mono">thinking</code></b> só atravessam intactos no passthrough Anthropic; nos caminhos Chat/Responses são descartados por limitação de representação.</li>
+        <li><b>Sem tradutor para o protocolo nativo do Google</b> — essas linhas são ocultadas no boot.</li>
+        <li><b>A qualidade é do modelo</b> — o proxy garante o formato, não equaliza capacidades.</li>
+      </ul>
+    </section>
+
+    <section id="seguranca">
+      <h2>Segurança</h2>
+      <ul>
+        <li>Só escuta em <code class="mono">127.0.0.1</code>.</li>
+        <li>Segredos ficam só em memória — nunca logados; o SQLite é aberto em <code class="mono">READ_ONLY</code> no fallback.</li>
+        <li>Arquivos de estado (<code class="mono">ocg.pid</code>, <code class="mono">ocg.port</code>, <code class="mono">ocg.session</code>, <code class="mono">ocg.pair</code>, <code class="mono">ocg.log</code>) criados <code class="mono">0600</code>.</li>
+        <li>Com <code class="mono">auth_token</code>, todo endpoint exceto <code class="mono">/health</code> exige o token.</li>
+      </ul>
+    </section>
+  </article>
+</div>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="row">
+      <span class="tag"><i>ocg</i> <span>· gateway local · 127.0.0.1:3737</span></span>
+      <span class="tag"><a href="index.html">apresentação</a> · <a href="docs.html">docs</a> · <a href="https://github.com/marcos2872/opencode-claude-gateway">código</a></span>
+    </div>
+    <p class="fine">Projeto independente. Não é afiliado à Anthropic nem ao opencode. Claude e Claude Code são marcas da Anthropic; o opencode é um projeto separado com sua própria licença.</p>
+  </div>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>
