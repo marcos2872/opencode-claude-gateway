@@ -52,11 +52,21 @@ detalhes de teste de auth/modelos com `curl` estão em [Erros](erros.md) e no
 
 ## Plugins do Claude Code (`plugins/`)
 
-Os mods que acompanham o gateway ficam em `plugins/` (um por pasta) e o
+Os plugins que acompanham o gateway ficam em `plugins/` (um por pasta) e o
 repositório também é um marketplace (`.claude-plugin/marketplace.json`).
+
+São dois formatos, escolhidos pelo que a tarefa precisa:
+
+- **mod de hooks** (`agent-usage`): `hooks/register.tsx` com a API da `$`.
+  Vale quando HTTP (`$.http.fetch`), arquivos (`$.fs`) e timers (`$.clock`)
+  bastam.
+- **servidor MCP** (`browser-relay`): `.mcp.json` + um processo Bun. Vale
+  quando precisa de WebSocket, servidor HTTP, `node:fs` ou blocos de imagem —
+  nada disso existe no ambiente de um mod de hooks.
 
 ```bash
 ./scripts/install-agents-plugin.sh              # instala agent-usage (escopo user)
+./scripts/install-agents-plugin.sh --browser    # + browser-relay (Bun + extensão do Chrome)
 ./scripts/install-agents-plugin.sh --dry-run    # mostra o que faria
 ./scripts/install-agents-plugin.sh --plugin-dir # não instala; monta a pasta numa sessão
 claude plugin validate plugins/agent-usage

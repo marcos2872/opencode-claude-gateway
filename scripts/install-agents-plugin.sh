@@ -23,6 +23,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 PLUGIN_DIR="$ROOT/plugins/agent-usage"
+BROWSER_DIR="$ROOT/plugins/browser-relay"
 CONFIG="${OCG_CONFIG:-$HOME/.config/opencode-claude-gateway/config.toml}"
 PORT="${OCG_PORT:-3737}"
 TOKEN="${OCG_AUTH_TOKEN:-}"
@@ -31,6 +32,7 @@ MODE="install"
 DRY_RUN=0
 SKIP_CHECK=0
 FORCE=0
+WITH_BROWSER=0
 
 usage() {
   cat <<'EOF'
@@ -40,6 +42,7 @@ Uso: scripts/install-agents-plugin.sh [opções]
   --token TOKEN      auth_token do gateway (default OCG_AUTH_TOKEN, senão lê o config)
   --config PATH      config.toml do gateway (default ~/.config/opencode-claude-gateway/config.toml)
   --scope SCOPE      escopo da instalação: user | project | local (default user)
+  --browser          inclui o plugin browser-relay (abas do Chrome via MCP + bun)
   --plugin-dir       não instala: só imprime como rodar com `claude --plugin-dir`
   --no-check         não consulta /usage antes de instalar
   --force            não pede confirmação
@@ -56,6 +59,7 @@ while [[ $# -gt 0 ]]; do
     --token) TOKEN="${2:?--token requer um valor}"; shift 2 ;;
     --config) CONFIG="${2:?--config requer um valor}"; shift 2 ;;
     --scope) SCOPE="${2:?--scope requer um valor}"; shift 2 ;;
+    --browser) WITH_BROWSER=1; shift ;;
     --plugin-dir) MODE="plugin-dir"; shift ;;
     --no-check) SKIP_CHECK=1; shift ;;
     --force) FORCE=1; shift ;;
@@ -156,6 +160,9 @@ if [[ "$MODE" == "plugin-dir" ]]; then
   echo "› modo --plugin-dir: nada é instalado; a sessão carrega a pasta direto."
   echo
   echo "  claude --plugin-dir $PLUGIN_DIR"
+  if [[ "$WITH_BROWSER" -eq 1 ]]; then
+    echo "  claude --plugin-dir $BROWSER_DIR"
+  fi
   echo
   echo "  valide/teste antes:"
   echo "    claude plugin validate $PLUGIN_DIR"
@@ -190,10 +197,21 @@ fi
 
 run claude "${INSTALL_ARGS[@]}"
 
+if [[ "$WITH_BROWSER" -eq 1 ]]; then
+  if ! command -v bun >/dev/null 2>&1; then
+    echo "aviso: \`bun\` não está no PATH; browser-relay não vai iniciar" >&2
+  fi
+  run claude plugin install browser-relay --marketplace "$ROOT" --scope "$SCOPE" -y
+fi
+
 if [[ "$DRY_RUN" -eq 0 ]]; then
   echo
   echo "› instalado. Na sessão atual rode /reload-plugins; novas sessões já carregam."
   echo "  a linha aparece sob o prompt (o Claude Code prefixa o nome do plugin):"
   echo "  5h 5% (resets in 2h14m) · wk 4% (resets in 6d3h) · mo 41% (resets in 15d19h) · US\$ 3.65"
   echo "  /agent-usage imprime o relatório completo."
+  if [[ "$WITH_BROWSER" -eq 1 ]]; then
+    echo "  tools do navegador: mcp__browser__navigate, __read_page, __computer, ..."
+    echo "  (a extensão OpenCode Browser precisa estar ativa no Chrome)"
+  fi
 fi

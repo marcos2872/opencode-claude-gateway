@@ -1,0 +1,7 @@
+{
+  "name": "browser-relay",
+  "version": "0.1.0",
+  "description": "Drive Chrome tabs from Claude Code through the OpenCode Browser extension (MCP server)",
+  "author": { "name": "Marcos Brito" },
+  "license": "MIT"
+}
