@@ -116,6 +116,11 @@ claude plugin test plugins/agent-usage
 O script de instalação consulta `GET /usage` antes de instalar (falha com
 `404` = binário antigo, `401` = token errado), lê o `auth_token` do
 `config.toml`/`OCG_AUTH_TOKEN` e o repassa como `--config auth_token=...`.
+O mod também aceita o `ANTHROPIC_AUTH_TOKEN` da sessão quando a opção
+`auth_token` está vazia, que é o caso de um gateway de dev subido com
+`./scripts/dev.sh` e aberto com `claude --settings target/dev/claude-settings.json`.
+O fallback é restrito a `base_url` em loopback, para o token da sessão nunca
+seguir para um host remoto configurado por engano.
 Com o marketplace apontando para a pasta local, editar o plugin e rodar
 `/reload-plugins` basta — não precisa reinstalar. A API de mods é early
 access: `.claude-plugin/types/claude-code/index.d.ts` (regravado a cada load)

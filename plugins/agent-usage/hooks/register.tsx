@@ -18,9 +18,49 @@ const last = atom(
 
 /** Filled in `register` from the manifest's `userConfig`. */
 let base = DEFAULT_BASE
+/** Config `auth_token`, or the session's own token when that is empty. */
 let token = ''
 
 const endpoint = () => `${base.replace(/\/+$/, '')}/usage`
+
+/**
+ * Whether `base` names this machine: `127.0.0.1`, `[::1]` or `localhost`.
+ * The gateway listens on loopback only, so anything else is not the gateway
+ * and must never be handed the session's credential by the fallback below.
+ */
+function isLoopback(url: string): boolean {
+  try {
+    const host = new URL(url).hostname
+    return host === '127.0.0.1' || host === 'localhost' || host === '[::1]'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The gateway token: the plugin's `auth_token`, else the `ANTHROPIC_AUTH_TOKEN`
+ * the session already uses to reach the gateway. Without that fallback a
+ * gateway started with an `auth_token` (`--settings` with a dev token, say)
+ * answers 401 here while the conversation keeps working, since the plugin's
+ * request carries its own headers and inherits nothing from the CLI.
+ *
+ * The fallback is loopback-only: a `base_url` pointing anywhere else is not
+ * this gateway, and sending it the session token would hand a credential to
+ * whatever host an option names. An explicit `auth_token` still goes wherever
+ * `base_url` says, since the person chose both.
+ *
+ * `$.env` may be absent (the test kit without `mock.env`), so a throw is not
+ * an error: the request just goes out unauthenticated as before.
+ */
+async function sessionToken($: EngineInterface): Promise<string> {
+  if (token !== '') return token
+  if (!isLoopback(base)) return ''
+  try {
+    return (await $.env.get('ANTHROPIC_AUTH_TOKEN')) ?? ''
+  } catch {
+    return ''
+  }
+}
 
 /**
  * One read of `GET /usage`, then the status line. A failure keeps the last
@@ -30,15 +70,20 @@ const endpoint = () => `${base.replace(/\/+$/, '')}/usage`
 async function poll($: EngineInterface) {
   try {
     const headers: Record<string, string> = { accept: 'application/json' }
-    if (token !== '') headers['x-api-key'] = token
+    const credential = await sessionToken($)
+    if (credential !== '') headers['x-api-key'] = credential
     const res = await $.http.fetch(endpoint(), { headers })
     if (!res.ok) {
       // 404 means the gateway predates `GET /usage`: say so, since updating
       // the binary is the fix and nothing else in the line would hint at it.
+      // 401 is the token mismatch (the gateway's `auth_token` is not the one
+      // this session uses), so name the option that fixes it.
       $.ui.status(
         res.status === 404
           ? 'gateway has no /usage (update ocg)'
-          : `gateway HTTP ${res.status}`,
+          : res.status === 401
+            ? 'gateway 401 (set plugin auth_token)'
+            : `gateway HTTP ${res.status}`,
       )
       return
     }
