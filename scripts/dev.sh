@@ -12,6 +12,17 @@
 #
 # O config gerado fica em target/dev/config.toml; edite-o e rode com
 # --no-build para iterar mais rápido. Ctrl+C derruba o servidor.
+#
+# Edições em config.toml são perdidas a cada execução (o script regenera o
+# arquivo). O que precisa sobreviver à regeneração vai em
+# target/dev/config.extra.toml, concatenado no fim do config gerado:
+#
+#   [aliases."claude-sonnet-5"]
+#   opencode = "opencode-go/glm-5.3-flash"
+#
+# Esse arquivo aceita apenas *tabelas* ([aliases.*], [tiers.*], [disabled]);
+# chaves de topo (port, auth_token, default_model…) duplicariam as geradas e
+# o TOML falharia no boot.
 
 set -euo pipefail
 
@@ -48,6 +59,8 @@ Uso: scripts/dev.sh [opções] [-- <args extras para o ocg>]
   -h, --help        esta ajuda
 
 Variáveis: OCG_DEV_PORT, OCG_DEV_TOKEN, OCG_DEV_LOG.
+
+Config extra (sobrevive à regeneração): target/dev/config.extra.toml
 EOF
 }
 
@@ -84,6 +97,7 @@ toml_escape() {
 
 STATE="$ROOT/target/dev"
 CONFIG="$STATE/config.toml"
+EXTRA="$STATE/config.extra.toml"
 PAIR_FILE="$STATE/ocg.pair"
 CLAUDE_SETTINGS="$STATE/claude-settings.json"
 BIN="$ROOT/target/debug/ocg"
@@ -115,6 +129,12 @@ mkdir -p "$STATE"
   echo "opencode_url = \"$(toml_escape "$OPENCODE_URL")\""
 } > "$CONFIG"
 
+# Config extra sobrevive à regeneração (tabelas apenas; ver cabeçalho).
+if [[ -f "$EXTRA" ]]; then
+  echo "" >> "$CONFIG"
+  cat "$EXTRA" >> "$CONFIG"
+fi
+
 # `--settings` sits above ~/.claude/settings.json in Claude Code precedence.
 # This matters when the user settings already pin ANTHROPIC_BASE_URL (the
 # common case for a direct OpenCode setup).
@@ -133,6 +153,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "# config: $CONFIG"
   cat "$CONFIG"
   echo
+  [[ -f "$EXTRA" ]] && echo "# (inclui $EXTRA)"
   echo "# Claude Code settings: $CLAUDE_SETTINGS"
   cat "$CLAUDE_SETTINGS"
   echo
@@ -157,6 +178,7 @@ echo
 echo "ocg dev · $BASE"
 echo "  token:  ${TOKEN:-<desativado>}"
 echo "  config: $CONFIG"
+[[ -f "$EXTRA" ]] && echo "  extra:  $EXTRA (concatenado no config)"
 echo "  pair:   $([[ "$PAIR_ENABLED" -eq 1 ]] && echo "enabled ($PAIR_FILE)" || echo "offline (CLI + SQLite)")"
 echo "  logs:   RUST_LOG=$LOG_LEVEL"
 echo "  Claude Code (uma sessão; sobrepõe ANTHROPIC_BASE_URL do settings.json):"

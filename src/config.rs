@@ -485,6 +485,24 @@ tier = "sonnet"
         }
     }
 
+    /// `config.example.toml` is hand-maintained and must stay loadable: a
+    /// broken example is the first config a user copies. Catches duplicate or
+    /// malformed tables and an alias with a ref that would silently degrade to
+    /// the catalog's plain-id match.
+    #[test]
+    fn example_config_loads() {
+        let text = include_str!("../config.example.toml");
+        let cfg: AppConfig =
+            toml::from_str(text).expect("config.example.toml must parse into AppConfig");
+        for (id, alias) in &cfg.aliases {
+            assert!(
+                alias.opencode.contains('/'),
+                "alias `{id}` must use a `provider/model` ref, got `{}`",
+                alias.opencode
+            );
+        }
+    }
+
     #[test]
     fn seed_template_writes_0600_valid_file() {
         let path = std::env::temp_dir().join(format!("ocg-seed-{}.toml", std::process::id()));

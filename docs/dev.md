@@ -49,6 +49,46 @@ aponta para o backend direto do OpenCode. `Ctrl+C` derruba o servidor. Os
 detalhes de teste de auth/modelos com `curl` estão em [Erros](erros.md) e no
 `--help` do script.
 
+### Config extra que sobrevive à regeneração
+
+O script **regenera** `target/dev/config.toml` a cada execução, então edições
+ali se perdem. O que precisa persistir vai em `target/dev/config.extra.toml`,
+concatenado ao fim do config gerado:
+
+```toml
+# target/dev/config.extra.toml — apenas tabelas
+[aliases."claude-sonnet-5"]
+opencode = "opencode-go/glm-5.3-flash"
+```
+
+Só **tabelas** (`[aliases.*]`, `[tiers.*]`, `[disabled]`) são aceitas: chaves
+de topo (`port`, `auth_token`, `default_model`) duplicariam as do config
+gerado e o TOML falharia no boot.
+
+Este checkout traz um extra de exemplo (ele não é versionado — `target/` está
+no `.gitignore` — então vive só nesta máquina) com os ids de primeira parte que
+o Claude Code manda por conta própria (`claude-sonnet-5`, `claude-opus-4-8`,
+`claude-haiku-4-5`, …), cada um preso a um dos três modelos escolhidos
+(`opencode-go/deepseek-v4.1-flash`, `opencode-go/muse-spark-1.3-contributor`,
+`github-copilot/gpt-6-luna`). Sem isso, esses ids caem no match por id puro do
+catálogo e vão para o `github-copilot/*` (WARN `ambiguous model id`) ou para o
+free-tier `opencode/*` — veja [Blindando o Copilot](config-cli.md#blindando-o-copilot-contra-chamadas-de-fundo-ids-blindados)
+e a receita completa em [Configuração](configuracao.md#prendendo-os-ids-de-primeira-parte-a-um-modelo-do-opencode-go).
+Apague `target/dev/config.extra.toml` para voltar ao comportamento padrão.
+
+Dois detalhes ao editar o extra:
+
+- o `opencode` deve ser o **`modelID` real** do catálogo (`glm-5.3-flash`,
+  com ponto, não `glm-5-3-flash`). Com a ref errada o alias aparece no
+  `/v1/models` mas a resolução não acha a linha e volta silenciosamente ao
+  match por id puro;
+- um alias manual **consome** a ref (`used_refs` em `src/api/state.rs`), o que
+  remove o alias automático `claude-opencode-go-*` daquele modelo do
+  `/v1/models`. Re-declare o canônico no extra quando apontar um alias para o
+  mesmo ref;
+
+O `--dry-run` mostra o config efetivo e sinaliza quando o extra foi incluído.
+
 ## Landing page (`web/`)
 
 A página é estática, sem build step, e é publicada como está pelo workflow
