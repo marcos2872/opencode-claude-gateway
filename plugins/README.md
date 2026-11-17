@@ -43,8 +43,9 @@ claude plugin test plugins/agent-usage
 ## Três formas de plugin, uma regra
 
 - **`agent-usage`** para no contrato HTTP local (`/usage`): o gateway já resolve
-  a credencial do plano, então o token nunca entra no ambiente do plugin e a
-  linha funciona em qualquer superfície do Claude Code sem exigir `sqlite3`.
+  a credencial do plano, então essa credencial nunca entra no ambiente do plugin
+  (só o `auth_token` do gateway, quando houver) e a linha funciona em qualquer
+  superfície do Claude Code sem exigir `sqlite3`.
 - **`browser-relay`** precisa de WebSocket e de um servidor HTTP, que um mod de
   hooks não tem — por isso é um plugin com **servidor MCP** próprio (Bun). Ele
   reaproveita o relay do plugin do OpenCode quando ele está rodando, em vez de

@@ -95,3 +95,105 @@ test('a quota failure keeps the last value and marks it stale', async ($, on) =>
   await clock.advance(60_000)
   expect(lines.at(-1)).toContain('5h 100% limit')
 })
+
+test('the session token reaches the gateway when the plugin has none', async ($, on) => {
+  const headers: (Record<string, string> | undefined)[] = []
+
+  mock.env(on, { ANTHROPIC_AUTH_TOKEN: 'dev-secret' })
+  on('http.fetch', (_, e) => {
+    headers.push(e.init?.headers)
+    return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(BASE) } }
+  })
+  on('ui.status', () => ({ value: undefined }))
+  on('command.register', () => ({ value: { command: 'agent-usage' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  // The gateway's `auth_token` is what the session sends; a plugin with no
+  // `auth_token` option must not go out bare (that was the 401).
+  expect(headers[0]?.['x-api-key']).toBe('dev-secret')
+})
+
+test(
+  'the auth_token option wins over the session token',
+  { options: { auth_token: 'dev-secret' } },
+  async ($, on) => {
+    const headers: (Record<string, string> | undefined)[] = []
+
+    mock.env(on, { ANTHROPIC_AUTH_TOKEN: 'session-token' })
+    on('http.fetch', (_, e) => {
+      headers.push(e.init?.headers)
+      return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(BASE) } }
+    })
+    on('ui.status', () => ({ value: undefined }))
+    on('command.register', () => ({ value: { command: 'agent-usage' } }))
+    on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+    expect(headers[0]?.['x-api-key']).toBe('dev-secret')
+  },
+)
+
+test('a 401 names the option that fixes it', async ($, on) => {
+  const lines: (string | undefined)[] = []
+
+  on('http.fetch', () => ({
+    value: { status: 401, ok: false, headers: {}, text: '{}' },
+  }))
+  on('ui.status', (_, e) => {
+    lines.push(e.text)
+    return { value: undefined }
+  })
+  on('command.register', () => ({ value: { command: 'agent-usage' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  expect(lines.at(-1)).toContain('gateway 401')
+  expect(lines.at(-1)).toContain('auth_token')
+})
+
+test(
+  'the session token stays home: a remote base_url gets none',
+  { options: { base_url: 'https://ocg.example.com' } },
+  async ($, on) => {
+    const headers: (Record<string, string> | undefined)[] = []
+
+    mock.env(on, { ANTHROPIC_AUTH_TOKEN: 'session-token' })
+    on('http.fetch', (_, e) => {
+      headers.push(e.init?.headers)
+      return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(BASE) } }
+    })
+    on('ui.status', () => ({ value: undefined }))
+    on('command.register', () => ({ value: { command: 'agent-usage' } }))
+    on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+    // The fallback exists for the local gateway; handing the session token to
+    // whatever host an option names would leak a credential.
+    expect(headers[0]?.['x-api-key']).toBeUndefined()
+  },
+)
+
+test(
+  'an explicit auth_token still goes wherever base_url points',
+  { options: { base_url: 'https://ocg.example.com', auth_token: 'remote-secret' } },
+  async ($, on) => {
+    const headers: (Record<string, string> | undefined)[] = []
+
+    on('http.fetch', (_, e) => {
+      headers.push(e.init?.headers)
+      return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(BASE) } }
+    })
+    on('ui.status', () => ({ value: undefined }))
+    on('command.register', () => ({ value: { command: 'agent-usage' } }))
+    on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+    expect(headers[0]?.['x-api-key']).toBe('remote-secret')
+  },
+)
