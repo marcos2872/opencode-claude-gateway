@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<!-- Web docs home: the hub the sidebar points from. Same shell as every docs
+     page (sidebar + article), so navigation stays identical across topics. -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daemon e CLI — ocg docs</title>
+<meta name="description" content="Documentação do opencode-claude-gateway: instalação, config.toml completo, aliases, modelos, variantes, Claude Code CLI, subagentes, Claude Desktop, tiers, erros e arquitetura.">
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+<link rel="canonical" href="https://marcos2872.github.io/opencode-claude-gateway/docs-daemon.html">
+<meta name="theme-color" content="#131210">
+<meta property="og:type" content="article">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:url" content="https://marcos2872.github.io/opencode-claude-gateway/docs-daemon.html">
+<meta property="og:title" content="Documentação — opencode-claude-gateway">
+<meta property="og:description" content="Referência completa: instalação, config.toml, aliases, modelos, variantes, CLI, subagentes, Desktop, tiers, erros e arquitetura.">
+<meta name="twitter:card" content="summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;family=DM+Mono:ital,wght@0,400;0,500;1,400&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Pular para o conteúdo</a>
+<span class="sr-only" id="copy-status" aria-live="polite"></span>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="mark" href="index.html"><img class="mark-icon" src="assets/logo.svg" alt="" width="24" height="24">ocg</a>
+    <nav aria-label="Principal">
+      <a href="index.html">Apresentação</a>
+      <a href="docs.html">Documentação</a>
+      <a class="opt" href="https://github.com/marcos2872/opencode-claude-gateway">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<div class="docs">
+
+  <button class="docs-nav-toggle" type="button" aria-expanded="false" aria-controls="toc">Tópicos</button>
+  <nav class="docs-nav" aria-label="Índice da documentação" id="toc">
+    <span class="k">começando</span>
+    <a href="docs.html">Visão geral</a>
+    <a href="docs-instalacao.html">Instalação</a>
+    <a href="docs-daemon.html">Daemon e CLI</a>
+    <span class="k">gateway</span>
+    <a href="docs-config.html">config.toml</a>
+    <a href="docs-auth.html">Autenticação</a>
+    <a href="docs-pareamento.html">Pareamento e credenciais</a>
+    <a href="docs-modelos.html">Modelos e resolução</a>
+    <a href="docs-aliases.html">Aliases</a>
+    <a href="docs-variantes.html">Variantes</a>
+    <a href="docs-tiers.html">Tiers</a>
+    <span class="k">clientes</span>
+    <a href="docs-cli.html">Claude Code CLI</a>
+    <a href="docs-subagentes.html">Subagentes</a>
+    <a href="docs-janela.html">Janela de contexto</a>
+    <a href="docs-desktop.html">Claude Desktop</a>
+    <span class="k">referência</span>
+    <a href="docs-http.html">Endpoints HTTP</a>
+    <a href="docs-erros.html">Erros e diagnóstico</a>
+    <a href="docs-arquitetura.html">Arquitetura</a>
+  </nav>
+
+  <article class="docs-body">
+    <header class="docs-hero">
+      <div class="docs-top">
+        <span class="tag"><i>02</i> <span>· começando</span></span>
+        <a class="tag" href="docs.html">índice</a>
+      </div>
+      <h1>Daemon e CLI</h1>
+      <p class="docs-lead">O gateway roda como daemon em background. Ciclo de vida e auto-start são <b>separados de propósito</b>: <code class="mono">--start</code>/<code class="mono">--stop</code> nunca tocam no auto-start, e <code class="mono">--enable</code>/<code class="mono">--disable</code> nunca iniciam nem param um gateway em execução.</p>
+    </header>
+
+    <section id="flags">
+      <h2>Flags</h2>
+      <div class="docs-table-wrap">
+      <table>
+        <caption class="sr-only">Flags do CLI</caption>
+        <thead><tr><th scope="col">flag</th><th scope="col">grupo</th><th scope="col">o que faz</th></tr></thead>
+        <tbody>
+          <tr><td>--start [--port N]</td><td>daemon</td><td>Sobe o filho destacado com <code class="mono">--serve</code>, espera <code class="mono">/health</code> e imprime os <code class="mono">export</code> do Claude Code.</td></tr>
+          <tr><td>--stop</td><td>daemon</td><td>SIGTERM (drena streams SSE) e limpa o estado.</td></tr>
+          <tr><td>--status</td><td>daemon</td><td>Se está rodando, em qual porta, se responde, e se o auto-start está ligado.</td></tr>
+          <tr><td>--enable</td><td>auto-start</td><td>Instala e habilita o systemd user service (<code class="mono">~/.config/systemd/user/ocg.service</code>, <code class="mono">ExecStart=&lt;bin&gt; --serve</code>). Não inicia agora.</td></tr>
+          <tr><td>--disable</td><td>auto-start</td><td>Remove o auto-start. Não para um gateway rodando.</td></tr>
+          <tr><td>--serve</td><td>foreground</td><td>Servidor em primeiro plano (dev e filho do daemon). Logs no terminal via <code class="mono">RUST_LOG</code>.</td></tr>
+          <tr><td>--refresh</td><td>prévia</td><td>Imprime o catálogo que o boot carregaria (N modelos + aliases) e sai.</td></tr>
+        </tbody>
+      </table>
+      </div>
+    </section>
+
+    <section id="arquivos">
+      <h2>Arquivos</h2>
+      <ul>
+        <li><b>Config:</b> <code class="mono">~/.config/opencode-claude-gateway/config.toml</code> — ou <code class="mono">--config</code> / <code class="mono">OCG_CONFIG</code>.</li>
+        <li><b>Estado:</b> <code class="mono">~/.local/share/opencode-claude-gateway/</code> com <code class="mono">ocg.pid</code>, <code class="mono">ocg.port</code>, <code class="mono">ocg.session</code>, <code class="mono">ocg.pair</code> e <code class="mono">ocg.log</code>. Todos criados <code class="mono">0600</code>.</li>
+        <li><b>Log:</b> <code class="mono">ocg.log</code>, só-append. Acompanhe com <code class="mono">tail -f</code>; o arquivo cresce com o uso.</li>
+        <li><b>Auto-start:</b> <code class="mono">~/.config/systemd/user/ocg.service</code>.</li>
+      </ul>
+    </section>
+
+    <section id="debug">
+      <h2>Debug por request</h2>
+      <p>O <code class="mono">RUST_LOG</code> é lido do ambiente do processo: use <code class="mono">--serve</code>, não o daemon, para ver a saída no terminal.</p>
+      <div class="term">
+        <div class="term-h">
+          <span>shell</span>
+          <button class="copy" type="button" data-copy="RUST_LOG=opencode_claude_gateway=debug ocg --serve">copiar</button>
+        </div>
+        <pre><span class="c">$</span> <span class="k">RUST_LOG</span>=opencode_claude_gateway=debug ocg --serve</pre>
+      </div>
+      <p>Linhas que importam:</p>
+      <ul>
+        <li><code class="mono">upstream ok</code> — id que o cliente pediu e id do upstream.</li>
+        <li><code class="mono">upstream cache usage</code> — <code class="mono">opencode_ref</code> resolvido e os acertos de cache de prefixo. É a única linha que mostra o destino real.</li>
+        <li><code class="mono">upstream rejected request</code> — status, corpo e <code class="mono">user_agent</code>/<code class="mono">session</code> para atribuir a chamada.</li>
+      </ul>
+    </section>
+  </article>
+</div>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="row">
+      <span class="tag"><i>ocg</i> <span>· gateway local · 127.0.0.1:3737</span></span>
+      <span class="tag"><a href="index.html">apresentação</a> · <a href="docs.html">docs</a> · <a href="https://github.com/marcos2872/opencode-claude-gateway">código</a></span>
+    </div>
+    <p class="fine">Projeto independente. Não é afiliado à Anthropic nem ao opencode. Claude e Claude Code são marcas da Anthropic; o opencode é um projeto separado com sua própria licença.</p>
+  </div>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>

@@ -93,4 +93,44 @@
   probes.forEach(function(p){
     p.addEventListener('click', function(){ renderProbe(p.getAttribute('data-probe')); });
   });
+
+  /* docs sidebar — mark the current page and the section in view */
+  /* docs sidebar — toggle on narrow screens, then mark page/section */
+  var toc = document.getElementById('toc');
+  var navToggle = document.querySelector('.docs-nav-toggle');
+  if (navToggle && toc) {
+    navToggle.addEventListener('click', function(){
+      var open = toc.classList.toggle('open');
+      navToggle.setAttribute('aria-expanded', String(open));
+    });
+  }
+
+  if (toc) {
+    var page = location.pathname.split('/').pop() || 'index.html';
+    var links = Array.prototype.slice.call(toc.querySelectorAll('a'));
+    links.forEach(function(a){
+      var target = a.getAttribute('href') || '';
+      if (target === page) a.setAttribute('aria-current', 'page');
+      if (target.charAt(0) === '#' && target === location.hash) a.classList.add('on');
+    });
+
+    // Hash links inside the same page: highlight as they scroll past.
+    var local = links.filter(function(a){ return (a.getAttribute('href') || '').charAt(0) === '#'; });
+    if (local.length && 'IntersectionObserver' in window) {
+      var byId = {};
+      local.forEach(function(a){ byId[a.getAttribute('href').slice(1)] = a; });
+      var io = new IntersectionObserver(function(entries){
+        entries.forEach(function(e){
+          if (!e.isIntersecting) return;
+          local.forEach(function(a){ a.classList.remove('on'); });
+          var active = byId[e.target.id];
+          if (active) active.classList.add('on');
+        });
+      }, { rootMargin: '-15% 0px -70% 0px', threshold: 0 });
+      Object.keys(byId).forEach(function(id){
+        var el = document.getElementById(id);
+        if (el) io.observe(el);
+      });
+    }
+  }
 })();

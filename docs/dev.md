@@ -89,18 +89,36 @@ Dois detalhes ao editar o extra:
 
 O `--dry-run` mostra o config efetivo e sinaliza quando o extra foi incluído.
 
-## Landing page (`web/`)
+## Landing page e documentação (`web/`)
 
-A página é estática, sem build step, e é publicada como está pelo workflow
+O site é estático, sem build step, e é publicado como está pelo workflow
 [`pages.yml`](../.github/workflows/pages.yml) em todo push na `main` que tocar
-`web/**`:
+`web/**`. São duas áreas:
 
 | Arquivo | Conteúdo |
 |---|---|
-| `web/index.html` | HTML semântico: hero, como funciona, instalar, configurar, limites |
-| `web/styles.css` | tokens de cor/tipografia, layouts, tabelas e breakpoints |
-| `web/app.js` | tabs, botões de copiar e o seletor de exemplos da tradução |
+| `web/index.html` | **apresentação**: hero, a tradução campo a campo e o CTA para a documentação |
+| `web/docs.html` | **home da documentação**: índice de tópicos em cards + "o que é o ocg" |
+| `web/docs-*.html` | uma página por tópico, todas com a mesma barra lateral (`<nav id="toc">`) |
+| `web/styles.css` | tokens, layout (landing e `docs`), tabelas e breakpoints |
+| `web/app.js` | tabs, botões de copiar, seletor de tradução, toggle/realce da sidebar |
 | `web/assets/logo.svg` | logo/favicon (cópia para o artifact ser autocontido) |
+
+Páginas de docs: `instalacao`, `daemon`, `config`, `auth`, `pareamento`,
+`modelos`, `aliases`, `variantes`, `tiers`, `cli`, `subagentes`, `janela`,
+`desktop`, `http`, `erros`, `arquitetura`.
+
+Convenções ao editar:
+
+- a **sidebar é duplicada** em cada `docs-*.html` (mesmo bloco `<nav id="toc">`).
+  Ao adicionar um tópico, acrescente o link em todas as páginas — o `app.js`
+  marca a página atual por nome de arquivo, então o href deve ser o arquivo, não
+  um fragmento;
+- o `index.html` é só apresentação: conteúdo de configuração vai para as páginas
+  de docs, não para uma seção nova da landing;
+- não há partials nem template engine. Se a duplicação da sidebar passar a
+  incomodar, o caminho é um pequeno passo de build no workflow do Pages antes de
+  publicar o artifact — hoje isso não é necessário.
 
 Para pré-visualizar localmente:
 
@@ -108,12 +126,6 @@ Para pré-visualizar localmente:
 cd web && python3 -m http.server 8000
 # abra http://127.0.0.1:8000/
 ```
-
-Não há partials nem template engine: as seções são delimitadas por comentários
-no `index.html`, e o CSS/JS ficam em arquivos próprios para não misturar
-conteúdo, estilo e comportamento. Se um dia a página crescer a ponto de precisar
-de partials, o workflow do Pages teria que rodar um build antes de subir o
-artifact — hoje isso não é necessário.
 
 ## CI e hooks
 

@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<!-- Web docs home: the hub the sidebar points from. Same shell as every docs
+     page (sidebar + article), so navigation stays identical across topics. -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aliases — ocg docs</title>
+<meta name="description" content="Documentação do opencode-claude-gateway: instalação, config.toml completo, aliases, modelos, variantes, Claude Code CLI, subagentes, Claude Desktop, tiers, erros e arquitetura.">
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+<link rel="canonical" href="https://marcos2872.github.io/opencode-claude-gateway/docs-aliases.html">
+<meta name="theme-color" content="#131210">
+<meta property="og:type" content="article">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:url" content="https://marcos2872.github.io/opencode-claude-gateway/docs-aliases.html">
+<meta property="og:title" content="Documentação — opencode-claude-gateway">
+<meta property="og:description" content="Referência completa: instalação, config.toml, aliases, modelos, variantes, CLI, subagentes, Desktop, tiers, erros e arquitetura.">
+<meta name="twitter:card" content="summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;family=DM+Mono:ital,wght@0,400;0,500;1,400&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Pular para o conteúdo</a>
+<span class="sr-only" id="copy-status" aria-live="polite"></span>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="mark" href="index.html"><img class="mark-icon" src="assets/logo.svg" alt="" width="24" height="24">ocg</a>
+    <nav aria-label="Principal">
+      <a href="index.html">Apresentação</a>
+      <a href="docs.html">Documentação</a>
+      <a class="opt" href="https://github.com/marcos2872/opencode-claude-gateway">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<div class="docs">
+
+  <button class="docs-nav-toggle" type="button" aria-expanded="false" aria-controls="toc">Tópicos</button>
+  <nav class="docs-nav" aria-label="Índice da documentação" id="toc">
+    <span class="k">começando</span>
+    <a href="docs.html">Visão geral</a>
+    <a href="docs-instalacao.html">Instalação</a>
+    <a href="docs-daemon.html">Daemon e CLI</a>
+    <span class="k">gateway</span>
+    <a href="docs-config.html">config.toml</a>
+    <a href="docs-auth.html">Autenticação</a>
+    <a href="docs-pareamento.html">Pareamento e credenciais</a>
+    <a href="docs-modelos.html">Modelos e resolução</a>
+    <a href="docs-aliases.html">Aliases</a>
+    <a href="docs-variantes.html">Variantes</a>
+    <a href="docs-tiers.html">Tiers</a>
+    <span class="k">clientes</span>
+    <a href="docs-cli.html">Claude Code CLI</a>
+    <a href="docs-subagentes.html">Subagentes</a>
+    <a href="docs-janela.html">Janela de contexto</a>
+    <a href="docs-desktop.html">Claude Desktop</a>
+    <span class="k">referência</span>
+    <a href="docs-http.html">Endpoints HTTP</a>
+    <a href="docs-erros.html">Erros e diagnóstico</a>
+    <a href="docs-arquitetura.html">Arquitetura</a>
+  </nav>
+
+  <article class="docs-body">
+    <header class="docs-hero">
+      <div class="docs-top">
+        <span class="tag"><i>07</i> <span>· gateway</span></span>
+        <a class="tag" href="docs.html">índice</a>
+      </div>
+      <h1>Aliases</h1>
+      <p class="docs-lead">Todo modelo habilitado ganha um id <code class="mono">claude-&lt;provider&gt;-&lt;model&gt;</code>. Quando o Claude pede um id que não existe, o gateway <b>adivinha</b> — e alias manual é como impedir a adivinhação.</p>
+    </header>
+
+    <section id="automatico">
+      <h2>Automático</h2>
+      <p>Nada a configurar. O prefixo <code class="mono">claude-</code> é obrigatório (o discovery do Claude Code só mantém ids contendo <code class="mono">claude</code>/<code class="mono">anthropic</code>) e janelas ≥ 1M ganham <code class="mono">[1m]</code> — o único sufixo que a mainline lê.</p>
+      <p>Linhas com o mesmo <code class="mono">provider/model</code> mas <code class="mono">id</code> distinto (ex. <code class="mono">opus-4.8</code> e <code class="mono">opus-4.8-fast</code>) ganham aliases separados, cada um com seus <code class="mono">headers</code>/<code class="mono">body</code> do catálogo. Ospellings de família podem ser blindados por <code class="mono">cli_shield_aliases</code> (<code class="mono">claude-sonnet</code> → <code class="mono">cs</code>) para o CLI não resolve-las por substring — ver <a href="docs-cli.html">CLI</a>.</p>
+    </section>
+
+    <section id="manual">
+      <h2>Manual e precedência</h2>
+      <p><code class="mono">[aliases."&lt;gateway-id&gt;"]</code> tem precedência sobre o automático para o mesmo id. Duas consequências práticas:</p>
+      <ul>
+        <li><b>Um alias manual consome a ref.</b> Se você aponta <code class="mono">claude-x</code> para <code class="mono">opencode-go/glm-5.3-flash</code>, o alias automático daquele modelo some do <code class="mono">/v1/models</code>. Re-declare o canônico para manter os dois.</li>
+        <li><b>A ref é o modelID exato</b> — <code class="mono">glm-5.3-flash</code> (com ponto), não o slug do alias (<code class="mono">glm-5-3-flash</code>). Com a ref errada o alias aparece no <code class="mono">/v1/models</code> mas a resolução volta ao id simples, em silêncio.</li>
+      </ul>
+      <div class="term">
+        <div class="term-h">
+          <span>config.toml</span>
+          <button class="copy" type="button" data-copy="[aliases.&quot;claude-meu-modelo&quot;]
+opencode = &quot;opencode-go/glm-5.3-flash&quot;
+display_name = &quot;GLM 5.3 Flash&quot;
+description = &quot;via ocg&quot;">copiar</button>
+        </div>
+        <pre>[aliases.<span class="s">"claude-meu-modelo"</span>]
+opencode = <span class="s">"opencode-go/glm-5.3-flash"</span>
+display_name = <span class="s">"GLM 5.3 Flash"</span>
+description = <span class="s">"via ocg"</span></pre>
+      </div>
+    </section>
+
+    <section id="fixar">
+      <h2>Por que fixar ids de primeira parte</h2>
+      <p>O Claude Code manda ids hardcoded por conta própria: side queries de título, <code class="mono">small_fast</code>, o classificador do auto-mode e os fallbacks de família. Eles não passam por <code class="mono">default_model</code> nem por <a href="docs-tiers.html">tiers</a> — caem no match por id simples, que pega a primeira linha ordenada por <code class="mono">provider/model</code>:</p>
+      <ul>
+        <li><code class="mono">claude-sonnet-5</code> → <code class="mono">github-copilot/claude-sonnet-5</code>, com o WARN de ambiguidade;</li>
+        <li>ids que só existem no free-tier → <code class="mono">opencode/*</code>, que dá 403 fora do OpenCode.</li>
+      </ul>
+      <p>Como o alias manual vence o id simples, cada família pode ser presa a um modelo que você paga:</p>
+      <div class="term">
+        <div class="term-h">
+          <span>config.toml — prendendo as chamadas de fundo</span>
+          <button class="copy" type="button" data-copy="# haiku: small_fast, títulos, background
+[aliases.&quot;claude-haiku-4-5&quot;]
+opencode = &quot;opencode-go/muse-spark-1.3-contributor&quot;
+[aliases.&quot;claude-haiku-5-5&quot;]
+opencode = &quot;opencode-go/muse-spark-1.3-contributor&quot;
+
+# sonnet
+[aliases.&quot;claude-sonnet-4-5&quot;]
+opencode = &quot;github-copilot/gpt-6-luna&quot;
+[aliases.&quot;claude-sonnet-4-6&quot;]
+opencode = &quot;github-copilot/gpt-6-luna&quot;
+[aliases.&quot;claude-sonnet-5&quot;]
+opencode = &quot;github-copilot/gpt-6-luna&quot;
+[aliases.&quot;claude-sonnet-5-5&quot;]
+opencode = &quot;github-copilot/gpt-6-luna&quot;
+
+# opus (inclui o id do classificador do auto-mode)
+[aliases.&quot;claude-opus-4-8&quot;]
+opencode = &quot;opencode-go/deepseek-v4.1-flash&quot;
+
+# fable
+[aliases.&quot;claude-fable-5&quot;]
+opencode = &quot;opencode-go/deepseek-v4.1-flash&quot;
+
+# canônicos: um alias manual consome a ref, então re-declare para o
+# alias automático do modelo não sumir do /v1/models
+[aliases.&quot;claude-opencode-go-muse-spark-1-3-contributor&quot;]
+opencode = &quot;opencode-go/muse-spark-1.3-contributor&quot;
+[aliases.&quot;claude-github-copilot-gpt-6-luna&quot;]
+opencode = &quot;github-copilot/gpt-6-luna&quot;
+[aliases.&quot;claude-opencode-go-deepseek-v4-1-flash&quot;]
+opencode = &quot;opencode-go/deepseek-v4.1-flash&quot;">copiar</button>
+        </div>
+        <pre><span class="c"># haiku: small_fast, títulos, background</span>
+[aliases.<span class="s">"claude-haiku-4-5"</span>]
+opencode = <span class="s">"opencode-go/muse-spark-1.3-contributor"</span>
+[aliases.<span class="s">"claude-haiku-5-5"</span>]
+opencode = <span class="s">"opencode-go/muse-spark-1.3-contributor"</span>
+
+<span class="c"># sonnet</span>
+[aliases.<span class="s">"claude-sonnet-4-5"</span>]
+opencode = <span class="s">"github-copilot/gpt-6-luna"</span>
+[aliases.<span class="s">"claude-sonnet-4-6"</span>]
+opencode = <span class="s">"github-copilot/gpt-6-luna"</span>
+[aliases.<span class="s">"claude-sonnet-5"</span>]
+opencode = <span class="s">"github-copilot/gpt-6-luna"</span>
+[aliases.<span class="s">"claude-sonnet-5-5"</span>]
+opencode = <span class="s">"github-copilot/gpt-6-luna"</span>
+
+<span class="c"># opus (inclui o id do classificador do auto-mode)</span>
+[aliases.<span class="s">"claude-opus-4-8"</span>]
+opencode = <span class="s">"opencode-go/deepseek-v4.1-flash"</span>
+
+<span class="c"># fable</span>
+[aliases.<span class="s">"claude-fable-5"</span>]
+opencode = <span class="s">"opencode-go/deepseek-v4.1-flash"</span>
+
+<span class="c"># canônicos: um alias manual consome a ref, então re-declare para o</span>
+<span class="c"># alias automático do modelo não sumir do /v1/models</span>
+[aliases.<span class="s">"claude-opencode-go-muse-spark-1-3-contributor"</span>]
+opencode = <span class="s">"opencode-go/muse-spark-1.3-contributor"</span>
+[aliases.<span class="s">"claude-github-copilot-gpt-6-luna"</span>]
+opencode = <span class="s">"github-copilot/gpt-6-luna"</span>
+[aliases.<span class="s">"claude-opencode-go-deepseek-v4-1-flash"</span>]
+opencode = <span class="s">"opencode-go/deepseek-v4.1-flash"</span></pre>
+      </div>
+      <ol>
+        <li>Use o modelID exato em cada ref.</li>
+        <li>Cubra <b>todas</b> as variantes da família — um id novo não listado traz a adivinhação de volta.</li>
+        <li>Re-declare o canônico de cada modelo consumido.</li>
+        <li>Reinicie o gateway (config lido no boot).</li>
+      </ol>
+    </section>
+
+    <section id="conferir">
+      <h2>Conferindo o destino real</h2>
+      <p>O log <code class="mono">upstream ok</code> mostra o id que o cliente <i>pediu</i>. Quem revela o ref resolvido é <code class="mono">upstream cache usage</code>:</p>
+      <div class="term">
+        <div class="term-h">
+          <span>shell</span>
+          <button class="copy" type="button" data-copy="RUST_LOG=opencode_claude_gateway=debug ocg --serve&#10;curl -s -X POST -H 'x-api-key: TOKEN' -H 'content-type: application/json' \&#10;  -d '{&quot;model&quot;:&quot;claude-sonnet-5&quot;,&quot;max_tokens&quot;:16,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;hi&quot;}]}' \&#10;  http://127.0.0.1:3737/v1/messages > /dev/null&#10;# esperado: upstream cache usage ... opencode_ref=github-copilot/gpt-6-luna">copiar</button>
+        </div>
+        <pre><span class="c">$</span> <span class="k">RUST_LOG</span>=opencode_claude_gateway=debug ocg --serve
+<span class="c">$</span> curl -s -X POST -H <span class="s">'x-api-key: TOKEN'</span> -H <span class="s">'content-type: application/json'</span> \
+    -d <span class="s">'{"model":"claude-sonnet-5","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}'</span> \
+    http://127.0.0.1:3737/v1/messages &gt; /dev/null
+<span class="c"># esperado: upstream cache usage ... opencode_ref=github-copilot/gpt-6-luna</span></pre>
+      </div>
+      <p>O WARN <code class="mono">ambiguous model id</code> deve sumir depois de configurar. Limite: a lista é mantida à mão e as refs envelhecem com o catálogo (<code class="mono">ocg --refresh</code> lista as atuais).</p>
+    </section>
+
+    <section id="disabled">
+      <h2><code class="mono">[disabled]</code></h2>
+      <p>Esconde refs do picker <b>sem apagar a linha do catálogo</b>: o alias some do <code class="mono">/v1/models</code> e nunca é escolhido como default, mas a ref direta continua resolvendo.</p>
+      <p class="note"><b>Não é allowlist.</b> O catálogo continua participando do match por id simples, então desabilitar <code class="mono">github-copilot/claude-sonnet-5</code> não impede uma request com <code class="mono">"model":"claude-sonnet-5"</code> de ir para ele. Com alias desabilitado, use a ref direta — o alias antigo vira 404.</p>
+    </section>
+  </article>
+</div>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="row">
+      <span class="tag"><i>ocg</i> <span>· gateway local · 127.0.0.1:3737</span></span>
+      <span class="tag"><a href="index.html">apresentação</a> · <a href="docs.html">docs</a> · <a href="https://github.com/marcos2872/opencode-claude-gateway">código</a></span>
+    </div>
+    <p class="fine">Projeto independente. Não é afiliado à Anthropic nem ao opencode. Claude e Claude Code são marcas da Anthropic; o opencode é um projeto separado com sua própria licença.</p>
+  </div>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>
