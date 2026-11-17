@@ -236,11 +236,80 @@ Você escolhe modelos dentro do Claude Code via `/model`, alimentado por
   direta (`provider/model`) continua resolvendo, então dá para usar no chat
   explicitamente mesmo desabilitado. Com alias desabilitado, use a ref direta
   (`"model": "github-copilot/claude-haiku-4.5"`), não o alias antigo (vira 404).
+  **Atenção:** `[disabled]` não é uma allowlist — o catálogo continua
+  participando do match por **id puro**, então desabilitar
+  `github-copilot/claude-sonnet-5` não impede uma request com
+  `"model":"claude-sonnet-5"` de ir para ele (o WARN `ambiguous model id`
+  continua). Para prender esse id a outro modelo, use um alias manual (veja
+  [Prendendo os ids de primeira parte](#prendendo-os-ids-de-primeira-parte-a-um-modelo-do-opencode-go)).
 - `POST /v1/messages` também aceita refs diretas (`opencode-go/kimi-k2.7-code`) e
   model ids simples, mesmo fora da lista.
 - **Sem `"model"` na requisição** (probes/chamadas auxiliares): o gateway usa o
   `default_model` do config (ver [Modelo padrão](#modelo-padrão-default_model)), nunca
   "traduz" um modelo em outro — o `gateway_model` no log é sempre o id que o cliente pediu.
+
+## Prendendo os ids de primeira parte a um modelo do opencode-go
+
+O Claude Code manda, por conta própria, ids hardcoded de primeira parte:
+side queries (`stream=true`, `max_tokens: 64000`, sem tools), small-fast,
+o classificador do auto-mode e os fallbacks de família (`opus`/`sonnet`/
+`haiku`). Esses ids **não** passam por `default_model` nem por `[tiers]` — eles
+caem no match por **id puro** do catálogo, que escolhe a primeira linha
+ordenada por `provider/model`:
+
+- `claude-sonnet-5` → `github-copilot/claude-sonnet-5`, com o WARN
+  `ambiguous model id, using first` (o par ambíguo é
+  `[github-copilot/…, opencode/…]`);
+- ids que só existem no free-tier (`claude-haiku-5-5`) → `opencode/*`, que dá
+  403 fora do OpenCode.
+
+Em ambos os casos você não escolheu aquele modelo nem aquele provider. Como um
+**alias manual tem precedência** sobre o match por id puro, dá para prender
+cada id a um modelo que você paga/quer:
+
+```toml
+[aliases."claude-sonnet-5"]
+opencode = "opencode-go/glm-5.3-flash"
+display_name = "Sonnet 5 -> GLM 5.3 Flash"
+```
+
+Regras que fazem a receita funcionar (todas verificadas contra o catálogo
+real):
+
+1. `opencode` é o **`modelID` exato** do catálogo — `glm-5.3-flash` (ponto),
+   não o slug do alias (`glm-5-3-flash`). Com a ref errada o alias aparece no
+   `/v1/models` mas a resolução não encontra a linha e volta ao id puro, com o
+   mesmo WARN de antes.
+2. Cubra **todos** os ids da família, não só os que aparecem no seu log hoje
+   (`claude-opus-4-5` … `claude-opus-5-5`, `claude-fable-5*`): uma versão nova
+   do CLI pode mandar outro id e a inferência volta.
+3. Um alias manual **consome** a ref (`used_refs` em `src/api/state.rs`), o que
+   remove o alias automático `claude-opencode-go-<model>` daquele modelo do
+   `/v1/models`. Re-declare o canônico se quiser manter os dois:
+   ```toml
+   [aliases."claude-opencode-go-glm-5-3-flash"]
+   opencode = "opencode-go/glm-5.3-flash"
+   ```
+4. O sufixo `[1m]` continua funcionando: o id é anunciado como
+   `claude-sonnet-5[1m]` e o gateway remove o sufixo antes de resolver.
+
+Verificação (o `upstream ok` loga o id pedido, então use `cache usage`, que
+mostra o ref real):
+
+```bash
+RUST_LOG=opencode_claude_gateway=debug ocg --serve
+curl -s -X POST -H 'x-api-key: TOKEN' -H 'content-type: application/json' \
+  -d '{"model":"claude-sonnet-5","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}' \
+  http://127.0.0.1:3737/v1/messages > /dev/null
+# esperado no log:
+#   upstream cache usage gateway_model=claude-sonnet-5 opencode_ref=opencode-go/glm-5.3-flash …
+# e nenhum "ambiguous model id"
+```
+
+> **Limite:** isso é uma lista mantida à mão. Um id novo que o CLI passe a
+> mandar volta a cair na inferência. Para proibir de vez, o `lookup_entry`
+> precisaria recusar o match por id puro (um `strict_models`), o que ainda não
+> existe.
 
 ### Variantes (`#variant`)
 

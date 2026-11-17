@@ -235,7 +235,8 @@ Layers:
   "Veja também" cross-links between them. There are two independent config
   surfaces: `src/config.rs`'s `CONFIG_TEMPLATE` (what the first run seeds) and
   the hand-maintained `config.example.toml`; a test asserts the template lists
-  every `AppConfig` key, and the two files must be kept in sync.
+  every `AppConfig` key, and `example_config_loads` parses the example into
+  `AppConfig` (refs must stay `provider/model`), so both files are validated.
 
 Maintenance rules that bite if ignored: `src/domain/` stays pure (no tokio,
 axum or rusqlite — the module doc says so); adding an `AppConfig` field also

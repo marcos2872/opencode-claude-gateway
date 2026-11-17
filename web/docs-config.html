@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<!-- Web docs home: the hub the sidebar points from. Same shell as every docs
+     page (sidebar + article), so navigation stays identical across topics. -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>config.toml — ocg docs</title>
+<meta name="description" content="Documentação do opencode-claude-gateway: instalação, config.toml completo, aliases, modelos, variantes, Claude Code CLI, subagentes, Claude Desktop, tiers, erros e arquitetura.">
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+<link rel="canonical" href="https://marcos2872.github.io/opencode-claude-gateway/docs-config.html">
+<meta name="theme-color" content="#131210">
+<meta property="og:type" content="article">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:url" content="https://marcos2872.github.io/opencode-claude-gateway/docs-config.html">
+<meta property="og:title" content="Documentação — opencode-claude-gateway">
+<meta property="og:description" content="Referência completa: instalação, config.toml, aliases, modelos, variantes, CLI, subagentes, Desktop, tiers, erros e arquitetura.">
+<meta name="twitter:card" content="summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;family=DM+Mono:ital,wght@0,400;0,500;1,400&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Pular para o conteúdo</a>
+<span class="sr-only" id="copy-status" aria-live="polite"></span>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="mark" href="index.html"><img class="mark-icon" src="assets/logo.svg" alt="" width="24" height="24">ocg</a>
+    <nav aria-label="Principal">
+      <a href="index.html">Apresentação</a>
+      <a href="docs.html">Documentação</a>
+      <a class="opt" href="https://github.com/marcos2872/opencode-claude-gateway">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<div class="docs">
+
+  <button class="docs-nav-toggle" type="button" aria-expanded="false" aria-controls="toc">Tópicos</button>
+  <nav class="docs-nav" aria-label="Índice da documentação" id="toc">
+    <span class="k">começando</span>
+    <a href="docs.html">Visão geral</a>
+    <a href="docs-instalacao.html">Instalação</a>
+    <a href="docs-daemon.html">Daemon e CLI</a>
+    <span class="k">gateway</span>
+    <a href="docs-config.html">config.toml</a>
+    <a href="docs-auth.html">Autenticação</a>
+    <a href="docs-pareamento.html">Pareamento e credenciais</a>
+    <a href="docs-modelos.html">Modelos e resolução</a>
+    <a href="docs-aliases.html">Aliases</a>
+    <a href="docs-variantes.html">Variantes</a>
+    <a href="docs-tiers.html">Tiers</a>
+    <span class="k">clientes</span>
+    <a href="docs-cli.html">Claude Code CLI</a>
+    <a href="docs-subagentes.html">Subagentes</a>
+    <a href="docs-janela.html">Janela de contexto</a>
+    <a href="docs-desktop.html">Claude Desktop</a>
+    <span class="k">referência</span>
+    <a href="docs-http.html">Endpoints HTTP</a>
+    <a href="docs-erros.html">Erros e diagnóstico</a>
+    <a href="docs-arquitetura.html">Arquitetura</a>
+  </nav>
+
+  <article class="docs-body">
+    <header class="docs-hero">
+      <div class="docs-top">
+        <span class="tag"><i>03</i> <span>· gateway</span></span>
+        <a class="tag" href="docs.html">índice</a>
+      </div>
+      <h1>config.toml</h1>
+      <p class="docs-lead">Arquivo em <code class="mono">~/.config/opencode-claude-gateway/config.toml</code>, criado no primeiro run com todas as opções comentadas (parseando para os defaults). Um arquivo inválido é <b>erro fatal</b> — nunca default silencioso.</p>
+    </header>
+
+    <section id="quando">
+      <h2>Quando é lido</h2>
+      <p>No <b>boot</b>. Depois de editar: <code class="mono">ocg --stop &amp;&amp; ocg --start</code>, ou <code class="mono">systemctl --user restart ocg</code> quando o auto-start está ligado.</p>
+      <p>Overrides de ambiente: <code class="mono">--port</code>/<code class="mono">OCG_PORT</code>, <code class="mono">--config</code>/<code class="mono">OCG_CONFIG</code>, e <code class="mono">OCG_AUTH_TOKEN</code> (não-vazio sobrescreve o arquivo e é herdado pelo daemon filho).</p>
+      <p>Há duas superfícies independentes: o template semeado no primeiro run e o <code class="mono">config.example.toml</code> completo do repositório. Os dois são validados por teste.</p>
+    </section>
+
+    <section id="chaves">
+      <h2>Todas as chaves</h2>
+      <div class="docs-table-wrap">
+      <table>
+        <caption class="sr-only">Chaves do config.toml e padrões</caption>
+        <thead><tr><th scope="col">chave</th><th scope="col">padrão</th><th scope="col">o que faz</th></tr></thead>
+        <tbody>
+          <tr><td>port</td><td><code>3737</code></td><td>Porta do gateway (sempre <code>127.0.0.1</code>).</td></tr>
+          <tr><td>auth_token</td><td><code>""</code></td><td>Vazio = aceita qualquer credencial. Setado = todo endpoint menos <code>GET /health</code> exige o token. Ver <a href="docs-auth.html">Autenticação</a>.</td></tr>
+          <tr><td>default_model</td><td><code>""</code></td><td>Modelo quando a request omite <code>model</code>. Vazio = primeiro alias alfabético — hoje costuma ser um <code>claude-github-copilot-…</code>. Fixe um que funcione.</td></tr>
+          <tr><td>opencode_bin</td><td><code>"opencode"</code></td><td>Binário do pareamento, do catálogo fallback e da descoberta do DB.</td></tr>
+          <tr><td>opencode_pair</td><td><code>true</code></td><td>Pareia com o serviço v2 e lê catálogo/providers/credenciais por HTTP. <code>false</code> = CLI + SQLite read-only. Ver <a href="docs-pareamento.html">Pareamento</a>.</td></tr>
+          <tr><td>opencode_url</td><td><code>""</code></td><td>URL explícita do servidor v2. Vazio = descobre pelo serviço selecionado.</td></tr>
+          <tr><td>include_free_tier</td><td><code>false</code></td><td>Mostra modelos <code>opencode/*</code> no <code>/v1/models</code>. Dão 403 fora do OpenCode.</td></tr>
+          <tr><td>desktop_aliases</td><td><code>false</code></td><td>Reescreve o id anunciado para furar a denylist do picker do Desktop (<code>deepseek</code> → <code>d-eepseek</code>). Só o id muda.</td></tr>
+          <tr><td>cli_shield_aliases</td><td><code>true</code></td><td>Reescreve o spelling de família nos ids (<code>claude-sonnet</code> → <code>cs</code>) para as chamadas de fundo do CLI não caírem no Copilot.</td></tr>
+          <tr><td>mock_classifier</td><td><code>false</code></td><td>Responde localmente o classificador do auto-mode e os probes de 1 token. Tradeoff: a revisão de segurança do auto-mode sempre responde "allow".</td></tr>
+          <tr><td>connect_timeout_secs</td><td><code>30</code></td><td>Timeout TCP/TLS — provedor inalcançável falha rápido.</td></tr>
+          <tr><td>request_timeout_secs</td><td><code>3600</code></td><td>Timeout total, <b>incluindo streaming</b>. Generoso de propósito: um turno longo com reasoning fica aberto minutos.</td></tr>
+          <tr><td>[aliases."&lt;id&gt;"]</td><td>—</td><td>Alias manual (<code>opencode</code> + <code>display_name</code>/<code>description</code>). Precede os automáticos. Ver <a href="docs-aliases.html">Aliases</a>.</td></tr>
+          <tr><td>[disabled] models</td><td><code>[]</code></td><td>Refs escondidas do <code>/v1/models</code>. Não bloqueia o match por id simples.</td></tr>
+          <tr><td>[tiers."&lt;ref&gt;"]</td><td>—</td><td>Tier de família (<code>haiku</code>/<code>sonnet</code>/<code>opus</code>/<code>fable</code>/<code>mythos</code>) anunciado no <code>/v1/models</code>. Ver <a href="docs-tiers.html">Tiers</a>.</td></tr>
+        </tbody>
+      </table>
+      </div>
+    </section>
+
+    <section id="exemplo">
+      <h2>Esqueleto completo</h2>
+      <div class="term">
+        <div class="term-h">
+          <span>config.toml</span>
+          <button class="copy" type="button" data-copy="# gateway
+port = 3737
+auth_token = &quot;&quot;
+default_model = &quot;&quot;
+
+# opencode v2
+opencode_bin = &quot;opencode&quot;
+opencode_pair = true
+opencode_url = &quot;&quot;
+
+# visibilidade do catálogo
+include_free_tier = false
+desktop_aliases = false
+cli_shield_aliases = true
+mock_classifier = false
+
+# transporte
+connect_timeout_secs = 30
+request_timeout_secs = 3600
+
+# [aliases.&quot;claude-my-model&quot;]
+# opencode = &quot;opencode-go/some-model&quot;
+# display_name = &quot;My model&quot;
+
+# [tiers.&quot;opencode-go/some-model&quot;]
+# tier = &quot;haiku&quot;
+# family_default = true
+
+# [disabled]
+# models = [&quot;opencode-go/hy4-preview&quot;]">copiar</button>
+        </div>
+        <pre><span class="c"># gateway</span>
+port = <span class="s">3737</span>
+auth_token = <span class="s">""</span>
+default_model = <span class="s">""</span>
+
+<span class="c"># opencode v2</span>
+opencode_bin = <span class="s">"opencode"</span>
+opencode_pair = <span class="s">true</span>
+opencode_url = <span class="s">""</span>
+
+<span class="c"># visibilidade do catálogo</span>
+include_free_tier = <span class="s">false</span>
+desktop_aliases = <span class="s">false</span>
+cli_shield_aliases = <span class="s">true</span>
+mock_classifier = <span class="s">false</span>
+
+<span class="c"># transporte</span>
+connect_timeout_secs = <span class="s">30</span>
+request_timeout_secs = <span class="s">3600</span>
+
+<span class="c"># [aliases."claude-my-model"]</span>
+<span class="c"># opencode = "opencode-go/some-model"</span>
+
+<span class="c"># [tiers."opencode-go/some-model"]</span>
+<span class="c"># tier = "haiku"</span>
+<span class="c"># family_default = true</span>
+
+<span class="c"># [disabled]</span>
+<span class="c"># models = ["opencode-go/hy4-preview"]</span></pre>
+      </div>
+    </section>
+  </article>
+</div>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="row">
+      <span class="tag"><i>ocg</i> <span>· gateway local · 127.0.0.1:3737</span></span>
+      <span class="tag"><a href="index.html">apresentação</a> · <a href="docs.html">docs</a> · <a href="https://github.com/marcos2872/opencode-claude-gateway">código</a></span>
+    </div>
+    <p class="fine">Projeto independente. Não é afiliado à Anthropic nem ao opencode. Claude e Claude Code são marcas da Anthropic; o opencode é um projeto separado com sua própria licença.</p>
+  </div>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>

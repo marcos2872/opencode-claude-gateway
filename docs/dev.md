@@ -50,6 +50,46 @@ aponta para o backend direto do OpenCode. `Ctrl+C` derruba o servidor. Os
 detalhes de teste de auth/modelos com `curl` estão em [Erros](erros.md) e no
 `--help` do script.
 
+### Config extra que sobrevive à regeneração
+
+O script **regenera** `target/dev/config.toml` a cada execução, então edições
+ali se perdem. O que precisa persistir vai em `target/dev/config.extra.toml`,
+concatenado ao fim do config gerado:
+
+```toml
+# target/dev/config.extra.toml — apenas tabelas
+[aliases."claude-sonnet-5"]
+opencode = "opencode-go/glm-5.3-flash"
+```
+
+Só **tabelas** (`[aliases.*]`, `[tiers.*]`, `[disabled]`) são aceitas: chaves
+de topo (`port`, `auth_token`, `default_model`) duplicariam as do config
+gerado e o TOML falharia no boot.
+
+Este checkout traz um extra de exemplo (ele não é versionado — `target/` está
+no `.gitignore` — então vive só nesta máquina) com os ids de primeira parte que
+o Claude Code manda por conta própria (`claude-sonnet-5`, `claude-opus-4-8`,
+`claude-haiku-4-5`, …), cada um preso a um dos três modelos escolhidos
+(`opencode-go/deepseek-v4.1-flash`, `opencode-go/muse-spark-1.3-contributor`,
+`github-copilot/gpt-6-luna`). Sem isso, esses ids caem no match por id puro do
+catálogo e vão para o `github-copilot/*` (WARN `ambiguous model id`) ou para o
+free-tier `opencode/*` — veja [Blindando o Copilot](config-cli.md#blindando-o-copilot-contra-chamadas-de-fundo-ids-blindados)
+e a receita completa em [Configuração](configuracao.md#prendendo-os-ids-de-primeira-parte-a-um-modelo-do-opencode-go).
+Apague `target/dev/config.extra.toml` para voltar ao comportamento padrão.
+
+Dois detalhes ao editar o extra:
+
+- o `opencode` deve ser o **`modelID` real** do catálogo (`glm-5.3-flash`,
+  com ponto, não `glm-5-3-flash`). Com a ref errada o alias aparece no
+  `/v1/models` mas a resolução não acha a linha e volta silenciosamente ao
+  match por id puro;
+- um alias manual **consome** a ref (`used_refs` em `src/api/state.rs`), o que
+  remove o alias automático `claude-opencode-go-*` daquele modelo do
+  `/v1/models`. Re-declare o canônico no extra quando apontar um alias para o
+  mesmo ref;
+
+O `--dry-run` mostra o config efetivo e sinaliza quando o extra foi incluído.
+
 ## Plugins do Claude Code (`plugins/`)
 
 Os plugins que acompanham o gateway ficam em `plugins/` (um por pasta) e o
@@ -81,18 +121,36 @@ Com o marketplace apontando para a pasta local, editar o plugin e rodar
 access: `.claude-plugin/types/claude-code/index.d.ts` (regravado a cada load)
 é a referência da build atual.
 
-## Landing page (`web/`)
+## Landing page e documentação (`web/`)
 
-A página é estática, sem build step, e é publicada como está pelo workflow
+O site é estático, sem build step, e é publicado como está pelo workflow
 [`pages.yml`](../.github/workflows/pages.yml) em todo push na `main` que tocar
-`web/**`:
+`web/**`. São duas áreas:
 
 | Arquivo | Conteúdo |
 |---|---|
-| `web/index.html` | HTML semântico: hero, como funciona, instalar, configurar, limites |
-| `web/styles.css` | tokens de cor/tipografia, layouts, tabelas e breakpoints |
-| `web/app.js` | tabs, botões de copiar e o seletor de exemplos da tradução |
+| `web/index.html` | **apresentação**: hero, a tradução campo a campo e o CTA para a documentação |
+| `web/docs.html` | **home da documentação**: índice de tópicos em cards + "o que é o ocg" |
+| `web/docs-*.html` | uma página por tópico, todas com a mesma barra lateral (`<nav id="toc">`) |
+| `web/styles.css` | tokens, layout (landing e `docs`), tabelas e breakpoints |
+| `web/app.js` | tabs, botões de copiar, seletor de tradução, toggle/realce da sidebar |
 | `web/assets/logo.svg` | logo/favicon (cópia para o artifact ser autocontido) |
+
+Páginas de docs: `instalacao`, `daemon`, `config`, `auth`, `pareamento`,
+`modelos`, `aliases`, `variantes`, `tiers`, `cli`, `subagentes`, `janela`,
+`desktop`, `http`, `erros`, `arquitetura`.
+
+Convenções ao editar:
+
+- a **sidebar é duplicada** em cada `docs-*.html` (mesmo bloco `<nav id="toc">`).
+  Ao adicionar um tópico, acrescente o link em todas as páginas — o `app.js`
+  marca a página atual por nome de arquivo, então o href deve ser o arquivo, não
+  um fragmento;
+- o `index.html` é só apresentação: conteúdo de configuração vai para as páginas
+  de docs, não para uma seção nova da landing;
+- não há partials nem template engine. Se a duplicação da sidebar passar a
+  incomodar, o caminho é um pequeno passo de build no workflow do Pages antes de
+  publicar o artifact — hoje isso não é necessário.
 
 Para pré-visualizar localmente:
 
@@ -100,12 +158,6 @@ Para pré-visualizar localmente:
 cd web && python3 -m http.server 8000
 # abra http://127.0.0.1:8000/
 ```
-
-Não há partials nem template engine: as seções são delimitadas por comentários
-no `index.html`, e o CSS/JS ficam em arquivos próprios para não misturar
-conteúdo, estilo e comportamento. Se um dia a página crescer a ponto de precisar
-de partials, o workflow do Pages teria que rodar um build antes de subir o
-artifact — hoje isso não é necessário.
 
 ## CI e hooks
 
@@ -293,9 +345,10 @@ Logs: `~/.local/share/opencode-claude-gateway/ocg.log`.
 ## Estado de build
 
 - `cargo clippy -- -D warnings` e `cargo fmt --check` precisam ficar limpos (como no CI).
-- Os testes e2e (`tests/gateway.rs`, `tests/pair.rs`, `tests/cache_usage.rs`)
-  usam um upstream mock — nunca chamam o binário real nem a rede. `tests/pair.rs`
-  usa um shim de `opencode` e um servidor v2 mock em loopback.
+- Os testes e2e (`tests/gateway.rs`, `tests/pair.rs`, `tests/cache_usage.rs`,
+  `tests/usage.rs`) usam um upstream mock — nunca chamam o binário real nem a
+  rede. `tests/pair.rs` usa um shim de `opencode` e um servidor v2 mock em
+  loopback.
 - O model catalog vem do pareamento v2 (fallback `opencode api get /api/model`);
   os testes de servidor usam um `AppState` semeado e `opencode_pair = false`.
 
