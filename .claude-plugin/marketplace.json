@@ -1,0 +1,8 @@
+{
+  "name": "ocg",
+  "owner": { "name": "Marcos Brito" },
+  "plugins": [
+    { "name": "agent-usage", "source": "./plugins/agent-usage" },
+    { "name": "browser-relay", "source": "./plugins/browser-relay" }
+  ]
+}

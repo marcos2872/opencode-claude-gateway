@@ -62,6 +62,13 @@ impl CredentialStore {
     /// v2 stores a JSON envelope `{"type":..,"key":".."}` in `value`,
     /// so unwrap it; fall back to the raw value for forward compatibility.
     pub fn get(&self, integration_id: &str) -> Option<SecretString> {
+        self.get_raw(integration_id)
+            .map(|raw| SecretString::from(unwrap_envelope(&raw)))
+    }
+
+    /// Raw `value` column (the v2 envelope text) for the active row of an
+    /// integration. Callers unwrap what they need; never log it.
+    pub fn get_raw(&self, integration_id: &str) -> Option<String> {
         let conn = rusqlite::Connection::open_with_flags(
             &self.db_path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
@@ -72,8 +79,7 @@ impl CredentialStore {
                 "SELECT value FROM credential WHERE integration_id = ?1 AND (active = 1 OR active IS NULL) LIMIT 1",
             )
             .ok()?;
-        let value: Option<String> = stmt.query_row([integration_id], |row| row.get(0)).ok();
-        value.map(|raw| SecretString::from(unwrap_envelope(&raw)))
+        stmt.query_row([integration_id], |row| row.get(0)).ok()
     }
 
     /// List integrations with stored credentials (metadata only, no secrets).

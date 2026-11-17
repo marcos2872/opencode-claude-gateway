@@ -377,7 +377,9 @@ impl OpenCodeClient {
         map
     }
 
-    async fn credential_for(&self, integration_id: &str) -> Option<SecretString> {
+    /// Active credential for an integration id (pair snapshot first, then the
+    /// SQLite table). Used by `bearer_for` and by the `/usage` report.
+    pub(crate) async fn credential_for(&self, integration_id: &str) -> Option<SecretString> {
         if self.pair_enabled {
             if let Some(secret) = self.credential_map().await.get(integration_id).cloned() {
                 return Some(secret);

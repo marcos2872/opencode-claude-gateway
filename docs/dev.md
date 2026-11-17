@@ -9,7 +9,7 @@ Pré-requisitos: Rust stable, `opencode` v2 logado (`opencode auth login`).
 ## Comandos
 
 ```bash
-cargo test                    # testes unitários (tradução, aliases, config) + e2e (tests/gateway.rs, tests/pair.rs, tests/cache_usage.rs)
+cargo test                    # testes unitários (tradução, aliases, config) + e2e (tests/gateway.rs, tests/pair.rs, tests/cache_usage.rs, tests/usage.rs)
 cargo test --test gateway     # só os testes e2e do gateway
 cargo test --test pair        # pareamento v2 + catálogo/providers/credenciais
 cargo test --test perf        # latência de tradução do proxy (report-only em debug)
@@ -18,6 +18,7 @@ cargo llvm-cov --locked --all-targets --summary-only  # cobertura (requer llvm-t
 cargo clippy -- -D warnings   # lint (precisa estar limpo)
 cargo fmt --check             # formatação (precisa estar limpa)
 ./scripts/dev.sh              # servidor em modo dev (config/token/pair isolados)
+./scripts/install-agents-plugin.sh  # instala o plugin agent-usage no Claude Code
 ```
 
 ## Modo dev (`scripts/dev.sh`)
@@ -88,6 +89,37 @@ Dois detalhes ao editar o extra:
   mesmo ref;
 
 O `--dry-run` mostra o config efetivo e sinaliza quando o extra foi incluído.
+
+## Plugins do Claude Code (`plugins/`)
+
+Os plugins que acompanham o gateway ficam em `plugins/` (um por pasta) e o
+repositório também é um marketplace (`.claude-plugin/marketplace.json`).
+
+São dois formatos, escolhidos pelo que a tarefa precisa:
+
+- **mod de hooks** (`agent-usage`): `hooks/register.tsx` com a API da `$`.
+  Vale quando HTTP (`$.http.fetch`), arquivos (`$.fs`) e timers (`$.clock`)
+  bastam.
+- **servidor MCP** (`browser-relay`): `.mcp.json` + um processo Bun. Vale
+  quando precisa de WebSocket, servidor HTTP, `node:fs` ou blocos de imagem —
+  nada disso existe no ambiente de um mod de hooks.
+
+```bash
+./scripts/install-agents-plugin.sh              # instala agent-usage (escopo user)
+./scripts/install-agents-plugin.sh --browser    # + browser-relay (Bun + extensão do Chrome)
+./scripts/install-agents-plugin.sh --dry-run    # mostra o que faria
+./scripts/install-agents-plugin.sh --plugin-dir # não instala; monta a pasta numa sessão
+claude plugin validate plugins/agent-usage
+claude plugin test plugins/agent-usage
+```
+
+O script de instalação consulta `GET /usage` antes de instalar (falha com
+`404` = binário antigo, `401` = token errado), lê o `auth_token` do
+`config.toml`/`OCG_AUTH_TOKEN` e o repassa como `--config auth_token=...`.
+Com o marketplace apontando para a pasta local, editar o plugin e rodar
+`/reload-plugins` basta — não precisa reinstalar. A API de mods é early
+access: `.claude-plugin/types/claude-code/index.d.ts` (regravado a cada load)
+é a referência da build atual.
 
 ## Landing page e documentação (`web/`)
 
@@ -313,9 +345,10 @@ Logs: `~/.local/share/opencode-claude-gateway/ocg.log`.
 ## Estado de build
 
 - `cargo clippy -- -D warnings` e `cargo fmt --check` precisam ficar limpos (como no CI).
-- Os testes e2e (`tests/gateway.rs`, `tests/pair.rs`, `tests/cache_usage.rs`)
-  usam um upstream mock — nunca chamam o binário real nem a rede. `tests/pair.rs`
-  usa um shim de `opencode` e um servidor v2 mock em loopback.
+- Os testes e2e (`tests/gateway.rs`, `tests/pair.rs`, `tests/cache_usage.rs`,
+  `tests/usage.rs`) usam um upstream mock — nunca chamam o binário real nem a
+  rede. `tests/pair.rs` usa um shim de `opencode` e um servidor v2 mock em
+  loopback.
 - O model catalog vem do pareamento v2 (fallback `opencode api get /api/model`);
   os testes de servidor usam um `AppState` semeado e `opencode_pair = false`.
 
