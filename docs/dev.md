@@ -113,6 +113,14 @@ claude plugin validate plugins/agent-usage
 claude plugin test plugins/agent-usage
 ```
 
+`--browser` **exige** `bun` e para antes de instalar qualquer coisa quando ele
+não está disponível (`curl -fsSL https://bun.sh/install | bash`). O launcher
+`plugins/browser-relay/server/launch.sh` procura o bun no `PATH` e nos caminhos
+de instalação (`$BUN_INSTALL/bin`, `~/.bun/bin`, `/usr/local/bin`,
+`/opt/homebrew/bin`, `/usr/bin`), porque `~/.bun/bin` costuma entrar no `PATH`
+só pelo `~/.zshrc` — que não vale para sessão iniciada por launcher, systemd ou
+app gráfico.
+
 O script de instalação consulta `GET /usage` antes de instalar (falha com
 `404` = binário antigo, `401` = token errado), lê o `auth_token` do
 `config.toml`/`OCG_AUTH_TOKEN` e o repassa como `--config auth_token=...`.

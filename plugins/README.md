@@ -16,7 +16,7 @@ Na raiz do repositório:
 
 ```bash
 ./scripts/install-agents-plugin.sh            # checa /usage e instala (escopo user)
-./scripts/install-agents-plugin.sh --browser  # + browser-relay (precisa de bun)
+./scripts/install-agents-plugin.sh --browser  # + browser-relay (exige bun; para se faltar)
 ./scripts/install-agents-plugin.sh --dry-run  # mostra os comandos
 ./scripts/install-agents-plugin.sh --scope project
 ```
@@ -49,7 +49,8 @@ claude plugin test plugins/agent-usage
 - **`browser-relay`** precisa de WebSocket e de um servidor HTTP, que um mod de
   hooks não tem — por isso é um plugin com **servidor MCP** próprio (Bun). Ele
   reaproveita o relay do plugin do OpenCode quando ele está rodando, em vez de
-  disputar a extensão.
+  disputar a extensão. O `.mcp.json` chama `server/launch.sh` por `/bin/sh`, que
+  resolve o `bun` no `PATH` e nos caminhos de instalação conhecidos.
 
 O critério: se a API da `$` resolve (HTTP, fs, clock), fica um mod de hooks; se
 precisa de socket, processo ou bloco de imagem, vira plugin com MCP.

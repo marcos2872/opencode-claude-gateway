@@ -18,7 +18,8 @@
  * imagem, que o MCP entrega ao modelo nativamente.
  */
 
-import { lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { timingSafeEqual } from "node:crypto"
+import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
@@ -35,6 +36,7 @@ const SERVER_VERSION = 6
 const CALL_TIMEOUT_MS = 180_000
 const EXTENSION_GRACE_MS = 8_000
 const MAX_WS_PAYLOAD = 24 * 1024 * 1024
+const MAX_HTTP_BODY = 1_000_000
 const MAX_IMAGE_BASE64 = 8 * 1024 * 1024
 const IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"])
 const IMAGE_EXT: Record<string, string> = {
@@ -72,6 +74,8 @@ const state = {
   pending: new Map<string, Pending>(),
   server: null as unknown,
   port: BASE_PORT,
+  /** Token do `/tool` quando este processo é o relay (igual ao do plugin do OpenCode). */
+  token: "",
 }
 
 function log(message: string, error?: unknown) {
@@ -181,14 +185,44 @@ async function callTool(tool: string, args: Record<string, unknown>): Promise<To
   // Prefer the relay another process already runs (the OpenCode plugin's), so
   // this server never takes the extension away from it.
   if (remote) {
+    const relay = remote
     try {
-      return await callRemote(remote, tool, args)
+      return await callRemote(relay, tool, args)
     } catch (error) {
+      // Relay remoto caiu (processo encerrado, porta reciclada): vira relay
+      // próprio em vez de falhar para sempre nesta sessão.
+      const status = await probeRelay(relay.port)
+      if (!status) {
+        log(`relay :${relay.port} não responde mais; assumindo localmente`)
+        remote = null
+        if (!state.server) {
+          try {
+            await ensureServer()
+          } catch (startError) {
+            log("não foi possível subir o relay local", startError)
+          }
+        }
+        return callTool(tool, args)
+      }
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
   }
   const socket = state.active ?? (await waitForActive(EXTENSION_GRACE_MS))
-  if (!socket) return { ok: false, error: NOT_CONNECTED }
+  if (!socket) {
+    if (foreignRelayPort) {
+      // Diagnóstico em vez do genérico "extensão não conectada": o usuário vê
+      // a extensão ativa no navegador e não entende por que a tool falha.
+      return {
+        ok: false,
+        error:
+          `A extensão está conectada a outro relay (porta ${foreignRelayPort}), de uma sessão ` +
+          "antiga do Claude Code ou do plugin do OpenCode que não publicou relay.json. " +
+          "Encerre aquela sessão (ou feche o OpenCode) e abra uma nova; as tools do " +
+          "navegador não podem ser divididas entre relays.",
+      }
+    }
+    return { ok: false, error: NOT_CONNECTED }
+  }
   const id = `mcp_${crypto.randomUUID()}`
   try {
     return await dispatch(socket, id, tool, args)
@@ -222,6 +256,13 @@ function startServer(port: number) {
       const url = new URL(request.url)
       if (url.pathname === "/health") {
         return Response.json({ connected: Boolean(state.active), version: SERVER_VERSION })
+      }
+      // `POST /tool` é o caminho entre processos: quando outra sessão do Claude
+      // Code (ou o plugin do OpenCode) lê o nosso `relay.json`, ela chama as
+      // tools por HTTP em vez de subir um relay concorrente. Sem isso, ela só
+      // encontra 404 e cai no próprio relay — que nunca recebe a extensão.
+      if (request.method === "POST" && url.pathname === "/tool") {
+        return handleHttpTool(request)
       }
       if (url.pathname !== "/" && url.pathname !== "/ws") {
         return new Response("Not found", { status: 404 })
@@ -325,17 +366,52 @@ function startServer(port: number) {
   })
 }
 
+/**
+ * Relay de outro processo que tem a extensão mas não publicou `relay.json`
+ * (processo de uma versão antiga deste plugin ou sessão órfã). Sem o token não
+ * há como chamá-lo por `/tool`, e a extensão só atende um relay por vez — então
+ * abrir o nosso na porta seguinte só produziria um relay eternamente
+ * desconectado. Guardamos a porta para devolver um erro que diga o que fazer.
+ */
+let foreignRelayPort = 0
+
 /** Sobe o relay numa porta livre, preferindo a primeira do candidato. */
-function ensureServer() {
+async function ensureServer() {
   for (const candidate of PORT_CANDIDATES) {
     try {
       const server = startServer(candidate)
       state.server = server
       state.port = candidate
+      state.token = crypto.randomUUID()
+      // Publica o token/porta: é o que faz a próxima sessão reutilizar este
+      // relay em vez de abrir um concorrente que nunca recebe a extensão.
+      writeRelayInfo(candidate, state.token)
       log(`relay ouvindo em ws://127.0.0.1:${candidate}`)
       return
     } catch {
-      log(`porta ${candidate} indisponível`)
+      // Porta ocupada. Se for um relay, falar com ele é a única saída correta:
+      // a extensão se conecta a UM relay só, então subir o nosso na porta
+      // seguinte nos deixaria permanentemente com `connected:false` — era
+      // exatamente isso que respondia "extensão não está conectada" com o
+      // navegador aberto e a extensão ativa.
+      const status = await probeRelay(candidate)
+      if (status) {
+        const info = readRelayInfo()
+        if (info && info.port === candidate) {
+          remote = info
+          log(`porta ${candidate} já tem um relay; reutilizando`)
+          return
+        }
+        foreignRelayPort = candidate
+        log(`porta ${candidate} tem um relay sem relay.json (sessão antiga)`)
+        if (status.connected) {
+          // Ele tem a extensão: subir o nosso não adiantaria nada.
+          log("a extensão está atendendo esse relay; encerre a sessão antiga para liberar")
+          return
+        }
+        continue
+      }
+      log(`porta ${candidate} indisponível (não é um relay)`)
     }
   }
   throw new Error("não foi possível abrir o relay em nenhuma porta candidata")
@@ -392,16 +468,18 @@ function readRelayInfo(): RemoteRelay | null {
   return null
 }
 
-async function probeRelay(port: number): Promise<boolean> {
+/** `null` = não é um relay nosso; senão diz se ele tem a extensão conectada. */
+async function probeRelay(port: number): Promise<{ connected: boolean } | null> {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/health`, {
       signal: AbortSignal.timeout(1_000),
     })
-    if (!response.ok) return false
+    if (!response.ok) return null
     const data = (await response.json()) as unknown
-    return isRecord(data) && typeof data.version === "number" && "connected" in data
+    if (!isRecord(data) || typeof data.version !== "number" || !("connected" in data)) return null
+    return { connected: Boolean(data.connected) }
   } catch {
-    return false
+    return null
   }
 }
 
@@ -411,7 +489,17 @@ let remote: RemoteRelay | null = null
 async function discoverRemote(): Promise<RemoteRelay | null> {
   const info = readRelayInfo()
   if (!info) return null
-  if (!(await probeRelay(info.port))) return null
+  const status = await probeRelay(info.port)
+  if (!status) return null
+  if (!status.connected) {
+    // O relay existe mas não tem a extensão: reutilizá-lo daria "extensão não
+    // está conectada" em toda chamada. Avisar é o que torna o caso
+    // diagnosticável, porque a extensão só atende um relay por vez.
+    log(
+      `relay :${info.port} está sem a extensão (ela pode estar conectada a outro relay); ` +
+        "feche as sessões extras do Claude Code para liberar a porta 8799",
+    )
+  }
   log(`reutilizando o relay existente na porta ${info.port}`)
   return info
 }
@@ -445,6 +533,110 @@ async function callRemote(relay: RemoteRelay, tool: string, args: Record<string,
     images: images?.length ? images.slice(0, 3) : undefined,
     metadata: isRecord(data.metadata) ? data.metadata : undefined,
   }
+}
+
+/**
+ * Grava `relay.json` para que outra sessão (ou o plugin do OpenCode) fale com
+ * este relay por `POST /tool` em vez de subir um concorrente.
+ *
+ * Sem isto o arquivo nunca existia: `discoverRemote()` sempre devolvia null, e
+ * cada sessão do Claude Code abria o seu próprio relay. Como a extensão se
+ * conecta a um relay só, os outros ficavam com `connected:false` para sempre e
+ * toda tool respondia "extensão não está conectada" — mesmo com o Brave aberto.
+ *
+ * Escrita atômica (tmp + rename) e 0600, como o plugin do OpenCode faz: um
+ * arquivo frouxo deixaria outro usuário da máquina plantar porta/token falsos.
+ */
+function writeRelayInfo(port: number, token: string): void {
+  const dir = relayDir()
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    try {
+      chmodSync(dir, 0o700)
+    } catch {
+      // se não somos donos, isTrusted() recusa abaixo
+    }
+    if (!isTrusted(dir)) {
+      log(`pasta ${dir} não é confiável (dono/permissões); relay.json não gravado`)
+      return
+    }
+    const tmp = join(dir, `relay.${process.pid}.${crypto.randomUUID()}.tmp`)
+    try {
+      writeFileSync(tmp, JSON.stringify({ token, port }), { mode: 0o600, flag: "wx" })
+      renameSync(tmp, relayFile())
+    } catch (error) {
+      rmSync(tmp, { force: true })
+      throw error
+    }
+  } catch (error) {
+    // Falhar aqui degrada para o comportamento antigo (relay próprio), não
+    // derruba o servidor: as tools continuam funcionando para esta sessão.
+    log("não foi possível gravar relay.json", error)
+  }
+}
+
+/** Remove o `relay.json` apenas se ainda for o nosso (outra instância pode tê-lo assumido). */
+function removeRelayInfoIfOwned(token: string): void {
+  try {
+    const info = readRelayInfo()
+    if (info?.token === token) rmSync(relayFile(), { force: true })
+  } catch {
+    // nada a fazer no shutdown
+  }
+}
+
+function tokenMatches(provided: string): boolean {
+  if (!provided || !state.token) return false
+  const expected = Buffer.from(state.token)
+  const actual = Buffer.from(provided)
+  // timingSafeEqual exige o mesmo tamanho; comparar o tamanho antes não vaza o token.
+  if (expected.length !== actual.length) return false
+  return timingSafeEqual(expected, actual)
+}
+
+/** `POST /tool` — o mesmo contrato do relay do OpenCode, para ser interoperável. */
+async function handleHttpTool(request: Request): Promise<Response> {
+  const length = Number(request.headers.get("content-length") ?? 0)
+  if (length > MAX_HTTP_BODY) {
+    return Response.json({ ok: false, error: "Corpo grande demais." }, { status: 413 })
+  }
+  if (!tokenMatches(request.headers.get("x-relay-token") ?? "")) {
+    return Response.json({ ok: false, error: "Forbidden" }, { status: 403 })
+  }
+  let body: unknown
+  try {
+    body = await request.json()
+  } catch {
+    return Response.json({ ok: false, error: "JSON inválido." }, { status: 400 })
+  }
+  if (!isRecord(body) || typeof body.tool !== "string") {
+    return Response.json({ ok: false, error: "Parâmetro tool ausente." }, { status: 400 })
+  }
+  if (body.args !== undefined && !isRecord(body.args)) {
+    return Response.json({ ok: false, error: "Parâmetro args inválido." }, { status: 400 })
+  }
+  const socket = state.active ?? (await waitForActive(EXTENSION_GRACE_MS))
+  if (!socket) {
+    return Response.json({ ok: false, error: NOT_CONNECTED }, { status: 503 })
+  }
+  const id = `http_${crypto.randomUUID()}`
+  if (state.pending.has(id)) {
+    return Response.json({ ok: false, error: "id de chamada já em uso." }, { status: 409 })
+  }
+  try {
+    const result = await dispatch(socket, id, body.tool, (body.args as Record<string, unknown>) ?? {})
+    return Response.json(result)
+  } catch (error) {
+    return Response.json(
+      { ok: false, error: error instanceof Error ? error.message : String(error) },
+      { status: 500 },
+    )
+  }
+}
+
+/** Caminho do `relay.json`, compartilhado com o plugin do OpenCode. */
+function relayFile(): string {
+  return join(relayDir(), "relay.json")
 }
 
 // ---------------------------------------------------------------------------
@@ -845,6 +1037,9 @@ process.stdin.on("end", () => {
     state.pending.delete(id)
     item.reject(new Error("O servidor MCP encerrou."))
   }
+  // Só apaga se ainda formos donos do relay.json: se outra instância assumiu,
+  // apagar deixaria as sessões dela sem caminho para o relay.
+  if (state.token) removeRelayInfoIfOwned(state.token)
   process.exit(0)
 })
 
@@ -852,7 +1047,13 @@ async function main() {
   // Never steal the extension from a relay that already has it: reuse first,
   // and only listen when nobody else does.
   remote = await discoverRemote()
-  if (!remote) ensureServer()
+  if (!remote) {
+    try {
+      await ensureServer()
+    } catch (error) {
+      log("não foi possível subir o relay", error)
+    }
+  }
   log(remote ? `MCP pronto via relay :${remote.port}` : "MCP pronto (stdin/stdout)")
 }
 

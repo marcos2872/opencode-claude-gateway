@@ -42,7 +42,7 @@ Uso: scripts/install-agents-plugin.sh [opções]
   --token TOKEN      auth_token do gateway (default OCG_AUTH_TOKEN, senão lê o config)
   --config PATH      config.toml do gateway (default ~/.config/opencode-claude-gateway/config.toml)
   --scope SCOPE      escopo da instalação: user | project | local (default user)
-  --browser          inclui o plugin browser-relay (abas do Chrome via MCP + bun)
+  --browser          inclui o plugin browser-relay (abas do Chrome via MCP; exige bun)
   --plugin-dir       não instala: só imprime como rodar com `claude --plugin-dir`
   --no-check         não consulta /usage antes de instalar
   --force            não pede confirmação
@@ -107,6 +107,48 @@ run() {
   fi
 }
 
+# -- requisito do browser-relay: bun ---------------------------------------
+#
+# O servidor MCP roda com `bun run`, então instalar o plugin sem bun produz um
+# MCP que morre no boot com ENOENT. Instalar primeiro a metade que funciona
+# (agent-usage) e um navegador inerte é pior do que parar aqui: o usuário sai
+# com um plugin instalado que nunca conecta. Por isso este é um bloqueio, e não
+# um aviso — e o bun é procurado também nos caminhos de instalação, porque uma
+# sessão sem o PATH do zsh interativo não o vê (é o mesmo motivo pelo qual o
+# launcher `server/launch.sh` do plugin existe).
+require_bun() {
+  local candidate
+  if command -v bun >/dev/null 2>&1; then
+    return 0
+  fi
+  for candidate in "${BUN_INSTALL:-$HOME/.bun}/bin/bun" "$HOME/.bun/bin/bun" /usr/local/bin/bun /usr/bin/bun; do
+    if [[ -x "$candidate" ]]; then
+      # Existe, mas fora do PATH da sessão: o launcher do plugin acha sozinho, o
+      # install script só avisa para o usuário não se surpreender.
+      echo "› bun em $candidate (fora do PATH; o launcher do plugin resolve)" >&2
+      return 0
+    fi
+  done
+
+  cat >&2 <<'EOF'
+erro: o browser-relay precisa do `bun`, e ele não foi encontrado.
+
+Instale o bun antes do plugin:
+
+  curl -fsSL https://bun.sh/install | bash
+
+Depois garanta que ele entra no PATH em toda sessão (não só no terminal
+interativo), no ~/.zshrc:
+
+  export BUN_INSTALL="$HOME/.bun"
+  export PATH="$BUN_INSTALL/bin:$PATH"
+
+Então rode este script de novo com --browser. Se já instalou o bun agora,
+abra um shell novo (ou `source ~/.zshrc`) para o PATH valer.
+EOF
+  exit 1
+}
+
 # -- pré-checagem do /usage ------------------------------------------------
 #
 # Instalar um mod que já começa mostrando 404/401 é pior do que não instalar:
@@ -156,6 +198,12 @@ if ! command -v claude >/dev/null 2>&1 && [[ "$DRY_RUN" -eq 0 ]]; then
   exit 1
 fi
 
+# Antes de instalar qualquer coisa: um --browser sem bun deixaria o agent-usage
+# instalado e o navegador quebrado.
+if [[ "$WITH_BROWSER" -eq 1 ]]; then
+  require_bun
+fi
+
 if [[ "$MODE" == "plugin-dir" ]]; then
   echo "› modo --plugin-dir: nada é instalado; a sessão carrega a pasta direto."
   echo
@@ -198,9 +246,6 @@ fi
 run claude "${INSTALL_ARGS[@]}"
 
 if [[ "$WITH_BROWSER" -eq 1 ]]; then
-  if ! command -v bun >/dev/null 2>&1; then
-    echo "aviso: \`bun\` não está no PATH; browser-relay não vai iniciar" >&2
-  fi
   run claude plugin install browser-relay --marketplace "$ROOT" --scope "$SCOPE" -y
 fi
 

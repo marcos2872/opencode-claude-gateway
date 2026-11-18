@@ -217,6 +217,17 @@ Layers:
   load). `/health` stays `starting` until that first load, `degraded` after a
   failure, `ok` otherwise. Tests build a seeded `AppState` and never call the
   real binary.
+- **`plugins/browser-relay` is a single-relay plugin**: the browser extension
+  talks to exactly one relay, so `server/browser-mcp.ts` publishes
+  `$XDG_RUNTIME_DIR/opencode-browser/relay.json` (0600, atomic write) and serves
+  `POST /tool` (token in `x-relay-token`) so every other session reuses it
+  instead of opening a concurrent relay. Opening a second relay on a free port
+  leaves it permanently `connected:false` — that is the "extensão não está
+  conectada" error with the browser open. The relay is entered through
+  `server/launch.sh`, called by `/bin/sh`, which resolves `bun` (PATH, then
+  `$BUN_INSTALL/bin`, `~/.bun/bin`, `/usr/local/bin`, `/opt/homebrew/bin`,
+  `/usr/bin`) because `~/.bun/bin` only reaches PATH via an interactive
+  `~/.zshrc`.
 - **Integration tests are self-contained per feature**, on purpose:
   `tests/gateway.rs` is the Claude-compat canary and stays Claude-only,
   `tests/pair.rs` covers the v2 pair flow + catalog/providers/credentials
