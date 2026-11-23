@@ -80,12 +80,12 @@
         <a class="docs-card" href="docs-instalacao.html">
           <span class="tag"><i>01</i> <span>· começando</span></span>
           <b>Instalação</b>
-          <p>Baixar o binário, migrar do <code class="mono">frank-opencode</code> e o que é pré-requisito.</p>
+          <p>Passo a passo no Linux, macOS e Windows: <code class="mono">ocg install</code>, <code class="mono">ocg claude</code>, onde ficam os arquivos e como editar o config.</p>
         </a>
         <a class="docs-card" href="docs-daemon.html">
           <span class="tag"><i>02</i> <span>· começando</span></span>
           <b>Daemon e CLI</b>
-          <p><code class="mono">--start</code>, <code class="mono">--stop</code>, auto-start no login, arquivos de estado e logs.</p>
+          <p><code class="mono">--start</code>, <code class="mono">--stop</code>, auto-start, arquivos de estado, logs e o <code class="mono">--status</code> com uso por modelo.</p>
         </a>
         <a class="docs-card" href="docs-config.html">
           <span class="tag"><i>03</i> <span>· gateway</span></span>
@@ -118,6 +118,25 @@
         <li><b>Traduz</b> a Messages API para o protocolo de cada modelo — passthrough Anthropic, Chat Completions ou Responses API — e de volta, streaming incluído.</li>
         <li><b>Resolve</b> o modelo por alias, ref <code class="mono">provider/model</code> ou id simples, com variantes <code class="mono">#variant</code>.</li>
       </ul>
+      <h3 class="d-m" style="margin-top:1.4rem">Os três comandos do dia a dia</h3>
+      <div class="docs-table-wrap">
+      <table>
+        <caption class="sr-only">Comandos principais</caption>
+        <thead><tr><th scope="col">comando</th><th scope="col">o que faz</th></tr></thead>
+        <tbody>
+          <tr><td><code class="mono">ocg install</code></td><td>Cria o config (cópia do <code class="mono">config.example.toml</code> + <code class="mono">auth_token</code> gerado). <code class="mono">--agent-usage</code>/<code class="mono">--browser</code> instalam os plugins; nunca toca em <code class="mono">~/.claude</code>.</td></tr>
+          <tr><td><code class="mono">ocg claude</code></td><td>Sobe o gateway se preciso e abre o Claude Code com um <code class="mono">--settings</code> só da sessão — a config global do Claude fica intacta.</td></tr>
+          <tr><td><code class="mono">ocg --status</code></td><td>Saúde, uptime e os modelos mais usados nos últimos 7 dias (tokens e % do total, com a conversão do alias).</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h3 class="d-m" style="margin-top:1.4rem">Plugins do Claude Code</h3>
+      <ul>
+        <li><b>agent-usage</b> — cota do OpenCode Go na faixa acima do prompt: barra, porcentagem e reset de cada janela (5h/semanal/mensal), mais os créditos, com cor por faixa de uso. Lê <code class="mono">GET /usage</code>. Instale com <code class="mono">ocg install --agent-usage</code>, que também grava o atalho <code class="mono">ctrl+x o</code> para esconder/mostrar a faixa.</li>
+        <li><b>browser-relay</b> — as abas do Chrome no Claude Code (servidor MCP). Instale com <code class="mono">ocg install --browser</code> (precisa de <code class="mono">bun</code>).</li>
+      </ul>
+
       <p>Para a apresentação visual e o diagrama da tradução, volte à <a href="index.html">página inicial</a>. Os mesmos textos existem em Markdown em <code class="mono">docs/</code>, no repositório.</p>
     </section>
 

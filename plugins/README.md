@@ -25,6 +25,15 @@ O script consulta `GET /usage` antes de instalar (404 = binário antigo, 401 =
 token errado), lê o `auth_token` do `config.toml` e o repassa via
 `--config auth_token=...`.
 
+O caminho principal, a partir do binário instalado, é o `ocg install` (não
+precisa do repositório ao lado):
+
+```bash
+ocg install --agent-usage            # alias: --agent-use
+ocg install --browser                # precisa de bun
+ocg install --local . --agent-usage  # da pasta do repo (dev)
+```
+
 O repositório também é um marketplace (`.claude-plugin/marketplace.json`), então
 a instalação manual equivalente é:
 

@@ -3,6 +3,11 @@
 # Instala o mod `agent-usage` (cota do OpenCode Go na linha de status) no
 # Claude Code, a partir da pasta plugins/ deste repositório.
 #
+# NOTA: com o binário instalado (`ocg` no PATH), prefira
+#   ocg install --agent-usage [--browser]
+# que instala pelo marketplace do repositório (não precisa desta pasta).
+# Este script continua útil para desenvolvimento com a pasta local (--plugin-dir).
+#
 # O mod consome `GET /usage` do gateway, então o passo que mais falha é o
 # token: o `auth_token` do config.toml precisa ser o mesmo que o plugin recebe.
 # Este script lê o config do gateway (e o OCG_AUTH_TOKEN) e o repassa como

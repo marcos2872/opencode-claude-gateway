@@ -6,7 +6,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Instalação — ocg docs</title>
-<meta name="description" content="Documentação do opencode-claude-gateway: instalação, config.toml completo, aliases, modelos, variantes, Claude Code CLI, subagentes, Claude Desktop, tiers, erros e arquitetura.">
+<meta name="description" content="Instalação do opencode-claude-gateway em Linux, macOS e Windows: baixar o binário, ocg install, ocg claude, onde ficam os arquivos e como editar o config.toml.">
 <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
 <link rel="canonical" href="https://marcos2872.github.io/opencode-claude-gateway/docs-instalacao.html">
 <meta name="theme-color" content="#131210">
@@ -71,63 +71,195 @@
         <a class="tag" href="docs.html">índice</a>
       </div>
       <h1>Instalação</h1>
-      <p class="docs-lead">O ocg é um único binário. O que ele precisa de verdade é de um <b>OpenCode v2 já autenticado</b> — o gateway reaproveita esse login em vez de pedir credenciais de novo.</p>
+      <p class="docs-lead">O ocg é um único binário. Instalar é baixar, rodar <code class="mono">ocg install</code> e abrir o Claude Code com <code class="mono">ocg claude</code> — sem editar a configuração global do Claude. O único pré-requisito real é um <b>OpenCode v2 já autenticado</b>: o gateway reaproveita esse login em vez de pedir credenciais de novo.</p>
     </header>
 
     <section id="pre">
-      <h2>Pré-requisitos</h2>
+      <h2>Antes de começar</h2>
       <ul>
         <li><b>OpenCode v2</b> instalado e logado (<code class="mono">opencode auth login</code>). É ele quem autentica no Console e fornece o catálogo de modelos.</li>
-        <li><code class="mono">curl</code> e, opcionalmente, o <code class="mono">gh</code> CLI para baixar o binário.</li>
+        <li><b>Claude Code</b> no <code class="mono">PATH</code> (<code class="mono">claude --version</code>) — o <code class="mono">ocg claude</code> e os plugins dependem dele.</li>
+        <li><code class="mono">curl</code> para baixar o binário. O <code class="mono">gh</code> CLI é opcional (só facilita achar a URL da release).</li>
       </ul>
+      <p class="note"><b>Um comando, três resultados.</b> <code class="mono">ocg install</code> cria o <code class="mono">config.toml</code> como cópia do <code class="mono">config.example.toml</code>, só trocando o <code class="mono">auth_token</code> por um gerado. Depois, <code class="mono">ocg claude</code> abre o CLI apontado para o gateway <b>sem tocar em <code class="mono">~/.claude</code></b>, e <code class="mono">ocg --status</code> mostra a saúde e o uso por modelo da semana.</p>
     </section>
 
-    <section id="release">
-      <h2>Binário da release</h2>
-      <div class="term">
-        <div class="term-h">
-          <span>shell</span>
-          <button class="copy" type="button" data-copy="URL=$(gh release view --repo marcos2872/opencode-claude-gateway --json assets --jq '.assets[] | select(.name==&quot;ocg-linux-x86_64&quot;) | .url')&#10;curl -L &quot;$URL&quot; -o /tmp/ocg&#10;install -m 0755 /tmp/ocg ~/.local/bin/ocg&#10;ocg --version">copiar</button>
+    <section id="baixar">
+      <h2>1 · Baixar o binário</h2>
+      <p>Escolha o seu sistema. A release oficial publica o binário Linux x86_64; nos outros sistemas, compile a partir do código (passo seguinte) — leva alguns minutos e não precisa de nada além do Rust.</p>
+
+      <div class="tabs" data-tabs>
+        <div role="tablist" aria-label="Sistema operacional">
+          <button role="tab" id="os-linux" aria-controls="panel-linux" aria-selected="true">Linux</button>
+          <button role="tab" id="os-macos" aria-controls="panel-macos" aria-selected="false">macOS</button>
+          <button role="tab" id="os-windows" aria-controls="panel-windows" aria-selected="false">Windows</button>
         </div>
-        <pre><span class="c"># 1. URL do binário mais recente</span>
-<span class="c">$</span> URL=$(gh release view --repo marcos2872/opencode-claude-gateway --json assets \
-      --jq <span class="s">'.assets[] | select(.name=="ocg-linux-x86_64") | .url'</span>)
-<span class="c"># 2. baixe, torne executável e mova para o PATH</span>
-<span class="c">$</span> curl -L <span class="s">"$URL"</span> -o /tmp/ocg
-<span class="c">$</span> install -m 0755 /tmp/ocg ~/.local/bin/ocg
-<span class="c"># 3. confira</span>
+
+        <div role="tabpanel" id="panel-linux" aria-labelledby="os-linux">
+          <div class="term">
+            <div class="term-h">
+              <span>shell · Linux x86_64</span>
+              <button class="copy" type="button" data-copy="URL=$(gh release view --repo marcos2872/opencode-claude-gateway --json assets --jq '.assets[] | select(.name==&quot;ocg-linux-x86_64&quot;) | .url')&#10;mkdir -p ~/.local/bin&#10;curl -L &quot;$URL&quot; -o ~/.local/bin/ocg&#10;chmod +x ~/.local/bin/ocg&#10;ocg --version">copiar</button>
+            </div>
+            <pre><span class="c"># baixa o binário da última release e deixa executável</span>
+<span class="c">$</span> URL=$(gh release view --repo marcos2872/opencode-claude-gateway \
+      --json assets --jq <span class="s">'.assets[] | select(.name=="ocg-linux-x86_64") | .url'</span>)
+<span class="c">$</span> mkdir -p ~/.local/bin
+<span class="c">$</span> curl -L <span class="s">"$URL"</span> -o ~/.local/bin/ocg
+<span class="c">$</span> chmod +x ~/.local/bin/ocg
 <span class="c">$</span> <span class="k">ocg</span> --version</pre>
+          </div>
+          <p>Sem <code class="mono">gh</code>, copie o link direto de <code class="mono">github.com/marcos2872/opencode-claude-gateway/releases</code>. Garanta que <code class="mono">~/.local/bin</code> está no <code class="mono">PATH</code> (a maioria das distros já inclui).</p>
+        </div>
+
+        <div role="tabpanel" id="panel-macos" aria-labelledby="os-macos" hidden>
+          <div class="term">
+            <div class="term-h">
+              <span>shell · macOS (Apple Silicon e Intel)</span>
+              <button class="copy" type="button" data-copy="cargo install --git https://github.com/marcos2872/opencode-claude-gateway&#10;ocg --version">copiar</button>
+            </div>
+            <pre><span class="c"># compila do código (precisa do Rust: rustup.rs)</span>
+<span class="c">$</span> <span class="k">cargo</span> install --git https://github.com/marcos2872/opencode-claude-gateway
+<span class="c">$</span> <span class="k">ocg</span> --version</pre>
+          </div>
+          <p>O <code class="mono">cargo install</code> coloca o binário em <code class="mono">~/.cargo/bin/ocg</code>, que o <code class="mono">rustup</code> já deixa no <code class="mono">PATH</code>. Se preferir Homebrew, veja a nota abaixo.</p>
+        </div>
+
+        <div role="tabpanel" id="panel-windows" aria-labelledby="os-windows" hidden>
+          <div class="term">
+            <div class="term-h">
+              <span>PowerShell · Windows</span>
+              <button class="copy" type="button" data-copy="cargo install --git https://github.com/marcos2872/opencode-claude-gateway&#10;ocg --version">copiar</button>
+            </div>
+            <pre><span class="c"># compila do código (precisa do Rust: rustup.rs)</span>
+<span class="c">PS&gt;</span> <span class="k">cargo</span> install --git https://github.com/marcos2872/opencode-claude-gateway
+<span class="c">PS&gt;</span> <span class="k">ocg</span> --version</pre>
+          </div>
+          <p>No Windows o binário fica em <code class="mono">%USERPROFILE%\.cargo\bin\ocg.exe</code>. O <code class="mono">ocg --enable</code> (auto-start) usa systemd, então não vale no Windows — use <code class="mono">ocg --start</code> ou crie uma tarefa de inicialização. O restante (gateway, launcher, plugins) funciona igual.</p>
+        </div>
       </div>
-      <p>Sem <code class="mono">gh</code>, copie o link direto da página da release no GitHub.</p>
     </section>
 
-    <section id="cargo">
-      <h2>A partir do código</h2>
+    <section id="compilar">
+      <h2>2 · Ou compilar do código</h2>
+      <p>Qualquer sistema, com Rust instalado:</p>
       <div class="term">
         <div class="term-h">
           <span>shell</span>
-          <button class="copy" type="button" data-copy="cargo install --path .&#10;# ou&#10;cargo install --git https://github.com/marcos2872/opencode-claude-gateway">copiar</button>
+          <button class="copy" type="button" data-copy="git clone https://github.com/marcos2872/opencode-claude-gateway&#10;cd opencode-claude-gateway&#10;cargo install --path .">copiar</button>
         </div>
-        <pre><span class="c"># no clone do repositório</span>
-<span class="c">$</span> <span class="k">cargo</span> install --path .
-<span class="c"># ou direto do git</span>
-<span class="c">$</span> <span class="k">cargo</span> install --git https://github.com/marcos2872/opencode-claude-gateway</pre>
+        <pre><span class="c">$</span> git clone https://github.com/marcos2872/opencode-claude-gateway
+<span class="c">$</span> cd opencode-claude-gateway
+<span class="c">$</span> <span class="k">cargo</span> install --path .</pre>
       </div>
     </section>
 
-    <section id="primeiro">
-      <h2>Primeiro run</h2>
-      <p>O primeiro run cria <code class="mono">~/.config/opencode-claude-gateway/config.toml</code> com todas as opções comentadas. Depois:</p>
-      <div class="term">
-        <div class="term-h">
-          <span>shell</span>
-          <button class="copy" type="button" data-copy="ocg --start&#10;ocg --status&#10;curl -s http://127.0.0.1:3737/health">copiar</button>
+    <section id="install">
+      <h2>3 · <code class="mono">ocg install</code>: config pronto</h2>
+      <ol class="steps">
+        <li>
+          <h3>Gere a configuração</h3>
+          <p>Cria <code class="mono">config.toml</code> (permissão 0600) como cópia do <code class="mono">config.example.toml</code>, só com o <code class="mono">auth_token</code> substituído por um token gerado de 64 hex. Os aliases que o exemplo fixa vêm exatamente como estão lá.</p>
+          <div class="term">
+            <div class="term-h">
+              <span>shell</span>
+              <button class="copy" type="button" data-copy="ocg install">copiar</button>
+            </div>
+            <pre><span class="c">$</span> <span class="k">ocg</span> install
+created /home/você/.config/opencode-claude-gateway/config.toml
+  auth_token: 9f2c…  (copie se for configurar um cliente à mão)</pre>
+          </div>
+        </li>
+        <li>
+          <h3>(Opcional) Instale os plugins</h3>
+          <p><code class="mono">--agent-usage</code> (alias <code class="mono">--agent-use</code>) põe a cota do OpenCode Go na faixa acima do prompt e grava o atalho <code class="mono">ctrl+x o</code> para esconder/mostrar essa faixa (o <code class="mono">ctrl+x ctrl+a</code> do engine continua valendo); <code class="mono">--browser</code> dá ao Claude Code as abas do Chrome. Eles vêm do marketplace do repositório e já recebem <code class="mono">base_url</code> e <code class="mono">auth_token</code> certos.</p>
+          <div class="term">
+            <div class="term-h">
+              <span>shell</span>
+              <button class="copy" type="button" data-copy="ocg install --agent-usage --browser   # --browser precisa de bun no PATH">copiar</button>
+            </div>
+            <pre><span class="c">$</span> <span class="k">ocg</span> install --agent-usage --browser   <span class="c"># --browser precisa de bun no PATH</span></pre>
+          </div>
+        </li>
+        <li>
+          <h3>Suba o gateway</h3>
+          <p>O <code class="mono">ocg install</code> não sobe nada. Suba em background com <code class="mono">--start</code> — ou pule este passo, porque o <code class="mono">ocg claude</code> sobe sozinho se preciso.</p>
+          <div class="term">
+            <div class="term-h">
+              <span>shell</span>
+              <button class="copy" type="button" data-copy="ocg --start&#10;ocg --status">copiar</button>
+            </div>
+            <pre><span class="c">$</span> <span class="k">ocg</span> --start
+<span class="c">$</span> <span class="k">ocg</span> --status</pre>
+          </div>
+        </li>
+        <li>
+          <h3>Abra o Claude Code</h3>
+          <p><code class="mono">ocg claude</code> escreve um <code class="mono">claude-settings.json</code> só da sessão e roda <code class="mono">claude --settings &lt;arquivo&gt;</code>. Como <code class="mono">--settings</code> tem precedência sobre <code class="mono">~/.claude/settings.json</code>, o gateway vale <b>só nesta sessão</b> e a sua configuração global continua intacta. Escolha o modelo no <code class="mono">/model</code>.</p>
+          <div class="term">
+            <div class="term-h">
+              <span>shell</span>
+              <button class="copy" type="button" data-copy="ocg claude                 # abre o CLI no gateway&#10;ocg claude -- --resume    # argumentos depois de -- vão para o claude">copiar</button>
+            </div>
+            <pre><span class="c">$</span> <span class="k">ocg</span> claude                 <span class="c"># abre o CLI no gateway</span>
+<span class="c">$</span> <span class="k">ocg</span> claude -- --resume    <span class="c"># argumentos depois de -- vão para o claude</span></pre>
+          </div>
+        </li>
+      </ol>
+      <p class="note"><b>Quer o gateway em toda sessão?</b> Em vez do launcher, aponte o <code class="mono">~/.claude/settings.json</code> uma única vez — é a alternativa explícita. Veja <a href="docs-cli.html">Claude Code CLI</a>. O <a href="docs-desktop.html">Claude Desktop</a> usa o gateway inference.</p>
+    </section>
+
+    <section id="caminhos">
+      <h2>Onde ficam os arquivos</h2>
+      <p>O <code class="mono">ocg</code> segue as pastas padrão de cada sistema (XDG no Linux). Se quiser abrir o config e editar, é o primeiro caminho da tabela.</p>
+      <div class="tabs" data-tabs>
+        <div role="tablist" aria-label="Sistema operacional">
+          <button role="tab" id="paths-linux" aria-controls="paths-panel-linux" aria-selected="true">Linux</button>
+          <button role="tab" id="paths-macos" aria-controls="paths-panel-macos" aria-selected="false">macOS</button>
+          <button role="tab" id="paths-windows" aria-controls="paths-panel-windows" aria-selected="false">Windows</button>
         </div>
-        <pre><span class="c">$</span> <span class="k">ocg</span> --start
-<span class="c">$</span> <span class="k">ocg</span> --status
-<span class="c">$</span> curl -s http://127.0.0.1:3737/health</pre>
+        <div role="tabpanel" id="paths-panel-linux" aria-labelledby="paths-linux">
+          <dl class="paths">
+            <div class="row"><dt>config</dt><dd>~/.config/opencode-claude-gateway/config.toml</dd></div>
+            <div class="row"><dt>estado</dt><dd>~/.local/share/opencode-claude-gateway/ (ocg.pid, ocg.port, ocg.pair, ocg.session, ocg.stats.json, ocg.log)</dd></div>
+            <div class="row"><dt>auto-start</dt><dd>~/.config/systemd/user/ocg.service</dd></div>
+          </dl>
+        </div>
+        <div role="tabpanel" id="paths-panel-macos" aria-labelledby="paths-macos" hidden>
+          <dl class="paths">
+            <div class="row"><dt>config</dt><dd>~/.config/opencode-claude-gateway/config.toml</dd></div>
+            <div class="row"><dt>estado</dt><dd>~/.local/share/opencode-claude-gateway/ (mesmos arquivos do Linux)</dd></div>
+            <div class="row"><dt>auto-start</dt><dd>sem systemd — use ocg --start ou um LaunchAgent</dd></div>
+          </dl>
+        </div>
+        <div role="tabpanel" id="paths-panel-windows" aria-labelledby="paths-windows" hidden>
+          <dl class="paths">
+            <div class="row"><dt>config</dt><dd>%APPDATA%\opencode-claude-gateway\config.toml</dd></div>
+            <div class="row"><dt>estado</dt><dd>%LOCALAPPDATA%\opencode-claude-gateway\ (pid, porta, par, sessão, stats, log)</dd></div>
+            <div class="row"><dt>auto-start</dt><dd>sem systemd — use ocg --start ou uma tarefa do Agendador</dd></div>
+          </dl>
+        </div>
       </div>
-      <p>A seguir, aponte seu cliente: <a href="docs-cli.html">Claude Code CLI</a> ou <a href="docs-desktop.html">Claude Desktop</a>.</p>
+      <p>Para usar outro config sem sair do padrão: <code class="mono">--config CAMINHO</code> ou a variável <code class="mono">OCG_CONFIG</code>.</p>
+    </section>
+
+    <section id="editar">
+      <h2>4 · Editando o config</h2>
+      <p>Abra o <code class="mono">config.toml</code> num editor e reinicie o gateway (<code class="mono">ocg --stop &amp;&amp; ocg --start</code>) — ele lê o arquivo no boot. As chaves mais usadas:</p>
+      <div class="docs-table-wrap">
+      <table>
+        <caption class="sr-only">Chaves mais editadas do config.toml</caption>
+        <thead><tr><th scope="col">chave</th><th scope="col">para quê</th></tr></thead>
+        <tbody>
+          <tr><td><code class="mono">auth_token</code></td><td>Credencial que o cliente envia. Já vem gerada; troque se quiser.</td></tr>
+          <tr><td><code class="mono">default_model</code></td><td>Modelo quando a request omite <code class="mono">model</code>. Fixe um que você queira, não o primeiro alfabético.</td></tr>
+          <tr><td><code class="mono">[aliases."&lt;id&gt;"]</code></td><td>Prende um id que o Claude pede (ex.: <code class="mono">claude-sonnet-5</code>) a um <code class="mono">provider/model</code> que você escolhe.</td></tr>
+          <tr><td><code class="mono">[tiers."&lt;ref&gt;"]</code></td><td>Tier de família para o Desktop (haiku/sonnet/opus/fable/mythos).</td></tr>
+          <tr><td><code class="mono">[disabled]</code></td><td>Esconde refs do <code class="mono">/v1/models</code>.</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>Referência completa: <a href="docs-config.html">config.toml</a> · aliases: <a href="docs-aliases.html">Aliases</a> · autenticação: <a href="docs-auth.html">Autenticação</a>.</p>
     </section>
 
     <section id="migrar">
@@ -144,6 +276,14 @@
 <span class="c">$</span> <span class="k">ocg</span> --start</pre>
       </div>
       <p><code class="mono">FRANK_PORT</code>/<code class="mono">FRANK_CONFIG</code>/<code class="mono">FRANK_AUTH_TOKEN</code> viraram <code class="mono">OCG_*</code>; o state mudou de <code class="mono">~/.local/share/frank-opencode/</code> para <code class="mono">~/.local/share/opencode-claude-gateway/</code>.</p>
+    </section>
+
+    <section id="proximo">
+      <h2>Próximos passos</h2>
+      <div class="cta">
+        <a class="btn" href="docs-daemon.html">Daemon e CLI</a>
+        <a class="btn ghost" href="docs-cli.html">Claude Code CLI</a>
+      </div>
     </section>
   </article>
 </div>

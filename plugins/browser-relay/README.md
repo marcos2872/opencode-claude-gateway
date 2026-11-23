@@ -66,6 +66,38 @@ de escrita não derruba a tool.
 | `OPENCODE_BROWSER_EXTENSION_ID` | id da extensão autorizada |
 | `OPENCODE_BROWSER_ALLOW_ANY_EXTENSION=1` | aceita qualquer `chrome-extension://` |
 
+## Sintoma: MCP sobe, mas as tools dão «Forbidden» (403)
+
+O MCP inicializa normalmente — ele fala stdio e não depende do relay para
+subir — e mesmo assim `mcp__browser__*` falha. Um `403` nesse caminho é sempre
+o relay de **outro processo** recusando o token, nunca a extensão.
+
+Causas, em ordem de frequência:
+
+1. **`relay.json` velho.** O token do relay do OpenCode é regravado a cada
+   sessão; um arquivo de uma sessão anterior (ou de outra máquina, quando
+   `XDG_RUNTIME_DIR` não está setado e o fallback `~/.cache` viaja junto)
+   aponta para um token que o relay vivo não aceita mais.
+2. **Relay reiniciado no mesmo porto.** Novo token, mesma porta: o arquivo
+   mudou depois de o MCP ler.
+3. **Dois usuários/ambientes** com `XDG_RUNTIME_DIR` diferentes: o MCP lê um
+   arquivo, o relay vive com outro.
+
+Correção automática (deste plugin): ao receber `403`, o servidor relê o
+`relay.json` e tenta **uma vez** de novo com o token atual; se o arquivo
+estiver parado no mesmo token, responde com a instrução abaixo em vez de um
+`403` cru. Se persistir, feche o OpenCode (que remove o `relay.json` ao sair),
+apague o arquivo à mão e reabra:
+
+```bash
+rm -f "${XDG_RUNTIME_DIR:-$HOME/.cache}/opencode-browser/relay.json"
+```
+
+Depois reinicie a sessão do Claude Code (`/reload-plugins` basta para recarregar
+o MCP). Verificação rápida: `curl -s http://127.0.0.1:8799/health` deve
+mostrar `{"connected":true,...}`; o token do arquivo tem que ser o mesmo que o
+relay aceita.
+
 ## Cuidados
 
 - `javascript_tool` executa código na página; `update_plan` pede aprovação de

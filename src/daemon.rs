@@ -39,6 +39,10 @@ fn pid_alive(pid: u32) -> bool {
 
 /// Single-connection health probe: TCP connect + `GET /health`, expect 200.
 /// (Previously this was two separate connects under a confusing name.)
+pub fn is_healthy(port: u16) -> bool {
+    gateway_healthy(port)
+}
+
 fn gateway_healthy(port: u16) -> bool {
     use std::io::{Read, Write};
     use std::net::TcpStream;
@@ -216,7 +220,11 @@ pub fn status() -> anyhow::Result<()> {
             } else {
                 "unreachable"
             };
-            println!("ocg running (pid {pid}, port {port}, {h})");
+            println!(
+                "ocg {} · running (pid {pid}, port {port}, {h}) · up {}",
+                env!("CARGO_PKG_VERSION"),
+                uptime(pid)
+            );
         }
         Some(pid) => println!("ocg pidfile exists but pid {pid} is dead"),
         None => println!("ocg is not running"),
@@ -227,7 +235,120 @@ pub fn status() -> anyhow::Result<()> {
         "disabled"
     };
     println!("auto-start: {auto}");
+    print_usage();
     Ok(())
+}
+
+/// Per-model usage block: from the running daemon's memory when it is up (the
+/// freshest copy), else from the persisted `ocg.stats.json` (up to one flush
+/// interval old), else "nothing yet".
+fn print_usage() {
+    use crate::stats::{self, UsageStats};
+    println!();
+    let live = if let Some(pid) = read_pid() {
+        if pid_alive(pid) {
+            snapshot_from_daemon(stored_port().unwrap_or(crate::config::DEFAULT_PORT))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    if let Some(snapshot) = live {
+        println!("{}", stats::render_report(&snapshot, stats::WINDOW_DAYS));
+        return;
+    }
+    let path = stats::default_path();
+    if !path.exists() {
+        println!(
+            "{}",
+            stats::render_report(&stats::Snapshot::default(), stats::WINDOW_DAYS)
+        );
+        return;
+    }
+    let stored = UsageStats::open(path);
+    println!(
+        "{}",
+        stats::render_report(&stored.snapshot(stats::WINDOW_DAYS), stats::WINDOW_DAYS)
+    );
+}
+
+/// One authenticated `GET /status` against the running gateway (it holds the
+/// in-memory counters). `None` on any failure: the caller falls back to disk.
+fn snapshot_from_daemon(port: u16) -> Option<crate::stats::Snapshot> {
+    use crate::stats::Snapshot;
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    let cfg = crate::config::AppConfig::load(None).ok()?;
+    let addr: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().ok()?;
+    let mut s = TcpStream::connect_timeout(&addr, Duration::from_millis(500)).ok()?;
+    let _ = s.set_read_timeout(Some(Duration::from_millis(1500)));
+    let auth = if cfg.auth_token.is_empty() {
+        String::new()
+    } else {
+        format!("Authorization: Bearer {}\r\n", cfg.auth_token)
+    };
+    s.write_all(format!("GET /status HTTP/1.0\r\nHost: 127.0.0.1\r\n{auth}\r\n").as_bytes())
+        .ok()?;
+    let mut raw = String::new();
+    s.read_to_string(&mut raw).ok()?;
+    let (head, body) = raw.split_once("\r\n\r\n")?;
+    if !head.starts_with("HTTP/1.") || !head.contains(" 200 ") {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    let rows = v.get("rows")?.as_array()?;
+    let mut snapshot = Snapshot::default();
+    for row in rows {
+        let requests = row.get("requests")?.as_u64()?;
+        let input = row.get("input")?.as_u64()?;
+        let output = row.get("output")?.as_u64()?;
+        let cached = row
+            .get("cached")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        snapshot.requests = snapshot.requests.saturating_add(requests);
+        snapshot.input = snapshot.input.saturating_add(input);
+        snapshot.output = snapshot.output.saturating_add(output);
+        snapshot.cached = snapshot.cached.saturating_add(cached);
+        snapshot.rows.push(crate::stats::Row {
+            gateway_model: row.get("gateway")?.as_str()?.to_string(),
+            opencode_ref: row.get("ref")?.as_str()?.to_string(),
+            totals: crate::stats::Totals {
+                requests,
+                input,
+                output,
+                cached,
+            },
+        });
+    }
+    Some(snapshot)
+}
+
+/// Human-readable age of the daemon, from the pidfile's mtime (the moment the
+/// process was recorded as started).
+fn uptime(pid: u32) -> String {
+    let _ = pid;
+    let Ok(meta) = fs::metadata(pid_file()) else {
+        return "?".to_string();
+    };
+    let Ok(modified) = meta.modified() else {
+        return "?".to_string();
+    };
+    let Ok(secs) = std::time::SystemTime::now().duration_since(modified) else {
+        return "?".to_string();
+    };
+    let total = secs.as_secs();
+    let (h, m) = (total / 3600, (total % 3600) / 60);
+    if h > 0 {
+        format!("{h}h{m:02}m")
+    } else if m > 0 {
+        format!("{m}m")
+    } else {
+        format!("{total}s")
+    }
 }
 
 fn print_next_steps(port: u16) {

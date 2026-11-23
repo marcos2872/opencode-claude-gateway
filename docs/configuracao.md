@@ -11,14 +11,90 @@ como o gateway resolve modelos e aliases.
 
 Arquivo: `~/.config/opencode-claude-gateway/config.toml` (veja
 [`config.example.toml`](../config.example.toml)).
-**No primeiro run** o arquivo é criado automaticamente com todas as opções
-comentadas (0600) — descomente e edite o que precisar. Paths informados via
-`--config`/`OCG_CONFIG` não são criados (se não existir, valem os defaults).
+**`ocg install`** cria esse arquivo (0600) como **cópia direta do
+[`config.example.toml`](../config.example.toml)**, trocando só o `auth_token`
+pelo gerado — os aliases (e o que estiver ativo/comentado no example) vêm como
+estão lá.
+Sem `ocg install` (ou num path via `--config`/`OCG_CONFIG` que ainda não
+existe), o primeiro run cria o arquivo com todas as opções comentadas.
+O `install` respeita `--config`/`OCG_CONFIG`; num arquivo existente ele não
+sobrescreve sem `--force` (que deixa um `.bak` datado).
 Overrides por env: `OCG_PORT`, `OCG_AUTH_TOKEN`, `OCG_CONFIG`.
 `OCG_AUTH_TOKEN` (quando não-vazio) sobrescreve o `auth_token` do arquivo.
 
 O config é lido **no boot** — mudanças exigem reiniciar o gateway
 (`ocg --stop && ocg --start`).
+
+## Instalação em um comando (`ocg install`)
+
+```bash
+ocg install                        # cópia do config.example + token gerado
+ocg install --agent-usage          # + mod de cota (alias: --agent-use)
+ocg install --browser              # + browser-relay (precisa de bun)
+ocg install --force                # regrava o config (backup .bak)
+ocg install --local . --agent-usage  # plugins da pasta do repo (dev)
+ocg install --agent-usage --no-keybinding    # não mexe no keybindings.json
+ocg install --agent-usage --move-keybinding  # tira o ctrl+x ctrl+a padrão
+```
+
+Os plugins vêm do marketplace do repositório
+(`claude plugin install <nome> --marketplace marcos2872/opencode-claude-gateway`),
+com `base_url`/`auth_token` já fixados no plugin. O `install` **não** sobe o
+daemon nem mexe no `settings.json` do `~/.claude`: ele termina imprimindo os
+próximos comandos (`ocg --start`, `ocg claude`).
+
+### Atalho da faixa (`--agent-usage`)
+
+Com `--agent-usage`, o `install` também escreve
+`~/.claude/keybindings.json` para dar um atalho que **esconde e mostra** a
+faixa da cota acima do prompt:
+
+```json
+{
+  "$schema": "https://www.schemastore.org/claude-code-keybindings.json",
+  "bindings": [
+    { "context": "Chat", "bindings": { "ctrl+x o": "abovePrompt:toggle" } }
+  ]
+}
+```
+
+O atalho é **aditivo**: o `ctrl+x ctrl+a` do engine continua valendo, a menos
+que você peça `--move-keybinding` (que grava `"ctrl+x ctrl+a": null`). O merge
+preserva tudo o que já existe no arquivo (outros contextos, outras teclas,
+`$schema`), nunca rouba um chord ligado a outra ação — nesse caso ele avisa e
+deixa como estava — e é idempotente. `--no-keybinding` pula esse passo.
+
+Por que o instalador faz isso, e não o plugin: o `plugin.json` **não** tem
+campo `keybindings` (o validador acusa campo desconhecido e ignora), e a API de
+mods só deixa um `Button` *referenciar* uma ação do engine, não criar um chord.
+Então o atalho é uma preferência do usuário, e é onde ele mora.
+
+A ação `abovePrompt:toggle` colapsa a **faixa inteira** acima do prompt, não
+só a linha do `agent-usage` — é o que o engine oferece. Funciona igual pela
+régua `[-]` no canto direito da faixa.
+
+## Status e uso por modelo (`ocg --status`)
+
+`ocg --status` mostra a saúde do daemon e os modelos mais usados nos
+**últimos 7 dias**, por tokens (entrada + saída reportados pelo upstream),
+com a participação de cada um no total e a conversão do alias:
+
+```
+ocg 0.4.1 · running (pid 4821, port 3737, healthy) · up 3h12m
+auto-start: enabled
+
+Most used models · last 7 days · 4.20M tokens · 1.20M cached
+  claude-sonnet-5 → opencode-go/deepseek-v4.1-flash           58.3% ... 2.45M 312 req
+  claude-opus-5 → github-copilot/gpt-6-luna                   22.1% ... 930K  138 req
+```
+
+Os contadores são gravados nos forwards bem-sucedidos (2xx), com o `usage`
+que o upstream reportou — upstreams que não reportam `usage` contam 0 tokens
+(as requisições continuam contadas). Ficam em
+`~/.local/share/opencode-claude-gateway/ocg.stats.json` (0600, buckets por dia
+UTC; `OCG_STATS_FILE` muda o caminho), persistidos a cada minuto e no
+shutdown. Com o daemon no ar, o status lê `GET /status` (memória, mais novo);
+com ele parado, lê o arquivo.
 
 ## Auto-start no login (`--enable` / `--disable`)
 
@@ -45,12 +121,13 @@ Por padrão `auth_token = ""`: o gateway aceita qualquer credencial
 (aceitável porque ele só escuta em `127.0.0.1`). Para exigir credencial:
 
 ```bash
-# 1. Gere um token
+# 1. Gere um token (ou deixe o `ocg install` gerar por você)
 openssl rand -hex 32
 
 # 2. Salve no config do gateway (arquivo criado no primeiro run)
 # edite ~/.config/opencode-claude-gateway/config.toml:
 #   auth_token = "SEU_TOKEN_AQUI"
+# (o `ocg install` já cria o arquivo com um token gerado)
 
 # 3. Reinicie o gateway para valer (o config é lido no boot)
 ocg --stop

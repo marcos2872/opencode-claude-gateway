@@ -86,6 +86,8 @@
           <tr><td>GET /v1/models</td><td>token*</td><td>Aliases <code class="mono">claude-&lt;provider&gt;-&lt;model&gt;</code>, com <code class="mono">[1m]</code> quando a janela real ≥ 1M e <code class="mono">context_window</code>. Alimenta o <code class="mono">/model</code>.</td></tr>
           <tr><td>POST /v1/messages</td><td>token*</td><td>Aceita alias, ref <code class="mono">provider/model</code> e id simples; sufixo <code class="mono">#variant</code> quando o catálogo declara variantes. Streaming via SSE.</td></tr>
           <tr><td>POST /v1/messages/count_tokens</td><td>token*</td><td>Pacotes Anthropic: proxy para <code class="mono">{baseURL}/messages/count_tokens</code> com fallback local; demais pacotes: estimativa local por partes.</td></tr>
+          <tr><td>GET /usage</td><td>token*</td><td>Cota do OpenCode Go (janelas de 5h/semanal/mensal + créditos do console) que o mod <code class="mono">agent-usage</code> lê. Cache de 60s; sempre <code class="mono">200</code>, com o erro numa linha.</td></tr>
+          <tr><td>GET /status</td><td>token*</td><td>Contadores de uso por modelo dos últimos 7 dias, em JSON — é o que o <code class="mono">ocg --status</code> lê quando o daemon está no ar.</td></tr>
         </tbody>
       </table>
       </div>

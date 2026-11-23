@@ -12,8 +12,10 @@ Gateway local compatível com Anthropic que expõe seus **modelos do OpenCode** 
 - Roda como daemon em background com `--start` / `--status` / `--stop`; `--enable` / `--disable` ligam o auto-start no login (systemd user service).
 
 ```bash
+ocg install    # cria o config (auth_token gerado) e, se quiser, os plugins
+ocg claude     # abre o Claude Code contra o gateway (sem editar ~/.claude)
 ocg --start    # inicia em background
-ocg --status
+ocg --status   # saúde + modelos mais usados na semana
 ocg --stop     # para
 ocg --enable   # auto-start no login (opcional)
 ```
@@ -56,9 +58,24 @@ ocg --version
 > `cargo install --git https://github.com/marcos2872/opencode-claude-gateway` (instalação
 > a partir do código — veja [Desenvolvimento](docs/dev.md)).
 
-No primeiro run o `~/.config/opencode-claude-gateway/config.toml` é criado
-automaticamente com **todas as opções comentadas** — descomente e edite o que
-precisar. Aponte seu cliente para o gateway:
+Depois de instalar o binário, um comando deixa a máquina pronta:
+
+```bash
+ocg install            # cria o config (cópia do example) com auth_token gerado
+ocg install --agent-usage --browser   # + plugins do Claude Code (cota, abas do Chrome; atalho ctrl+x o)
+ocg claude             # abre o Claude Code contra o gateway, sem tocar em ~/.claude
+ocg --status           # saúde + modelos mais usados na semana (% do total de tokens)
+```
+
+O `ocg install` **não** edita `~/.claude/settings.json`: ele gera um
+`~/.config/opencode-claude-gateway/config.toml` (0600) com um `auth_token`
+pronto: é uma **cópia direta do `config.example.toml`**, só com o `auth_token`
+substituído pelo gerado e, com `--agent-usage`/`--browser`, instala os plugins pelo marketplace
+do repositório. O `ocg claude` sobe o daemon se preciso e abre o CLI com um
+`--settings` só daquela sessão; a configuração global do Claude fica intacta.
+
+Para usar o gateway em toda sessão do Claude Code (sem `ocg claude`), configure
+o seu cliente uma vez:
 
 - **Claude Code (CLI):** [Configuração no CLI](docs/config-cli.md)
 - **Claude Desktop:** [Configuração no Desktop](docs/config-desktop.md)
@@ -103,4 +120,4 @@ pre-commit opcional. Como rodar em dev, testes, release e a suíte de latência:
 - [Erros e diagnóstico](docs/erros.md) — `/health`, logs e tabela de sintomas.
 - [Desenvolvimento](docs/dev.md) — como rodar em dev, testes, lint, releases.
 - [Arquitetura](docs/arquitetura.md) — como o gateway é estruturado (domínio, infra, API).
-- [Plugins do Claude Code](plugins/) — mod `agent-usage`: cota do OpenCode Go (janelas + créditos) na linha de status.
+- [Plugins do Claude Code](plugins/) — mod `agent-usage`: cota do OpenCode Go (barras por janela, % e reset + créditos) na faixa acima do prompt, com resumo na linha de status.

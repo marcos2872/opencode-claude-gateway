@@ -7,11 +7,12 @@ This file provides guidance to AI coding agents (Claude Code, Codex, OpenCode, e
 ## Commands
 
 ```bash
-cargo test                    # unit + integration tests (tests/gateway.rs, tests/pair.rs, tests/cache_usage.rs, tests/usage.rs, tests/perf.rs)
+cargo test                    # unit + integration tests (tests/gateway.rs, tests/pair.rs, tests/cache_usage.rs, tests/usage.rs, tests/status.rs, tests/perf.rs)
 cargo test --test gateway     # only the e2e gateway tests (Claude-compat canary)
 cargo test --test pair        # only the OpenCode v2 pair + catalog/credential tests
 cargo test --test cache_usage # only prefix-cache usage reporting
 cargo test --test usage       # only `GET /usage` (OpenCode Go quota report)
+cargo test --test status      # only token accounting + `GET /status` (ocg --status)
 cargo test --test perf        # proxy translation latency (report-only in debug, enforced in release)
 cargo test <name>             # single test by name substring
 cargo llvm-cov --locked --all-targets --summary-only  # cobertura (requer llvm-tools-preview + cargo-llvm-cov)
@@ -19,7 +20,9 @@ cargo clippy -- -D warnings   # must stay clean
 cargo fmt --check             # must stay clean
 cargo run -- --refresh        # print catalog + gateway aliases, exit
 cargo run -- --serve          # foreground server on 127.0.0.1:3737
-cargo run -- --status         # daemon state + hint when run with no flag
+cargo run -- --status         # daemon state + the week's model usage
+cargo run -- install          # seed config (generated token) + optional plugins
+cargo run -- claude           # open Claude Code against the gateway (session settings)
 ./scripts/dev.sh              # dev server: isolated config/token/pair in target/dev/
 ```
 ```
@@ -53,7 +56,32 @@ user service (`src/autostart.rs`, unit `~/.config/systemd/user/ocg.service`,
 running gateway and `--start`/`--stop` never touch auto-start. Configuration is loaded from `~/.config/opencode-claude-gateway/config.toml` (or `--config`/`OCG_CONFIG`), with `OCG_PORT` and `OCG_AUTH_TOKEN` overrides; first run at the
 default path seeds a fully-commented `CONFIG_TEMPLATE` (`src/config.rs`, 0600). State files
 (pid, port, session id, log) live in `~/.local/share/opencode-claude-gateway/` and are
-created 0600 via `daemon::write_private`.
+created 0600 via `daemon::write_private`. `ocg --status` also prints the last
+seven days of token usage per model (share of total, with the alias →
+destination conversion) from `src/stats.rs`; it reads `GET /status` from a
+running daemon (in-memory counters) and falls back to the flushed
+`ocg.stats.json` when the daemon is down.
+
+Onboarding is `src/install.rs`: `ocg install` writes the config at
+`--config`/`OCG_CONFIG`/the XDG default as a **direct copy of
+`config.example.toml`** (`include_str!`), substituting only the top-level
+`auth_token = ""` with a generated token — the aliases ship exactly as the
+example pins them, one source of truth. It never overwrites without `--force`
+(which keeps a dated `.bak`); `--agent-usage [alias --agent-use]` and
+`--browser` run `claude plugin install <name> --marketplace
+marcos2872/opencode-claude-gateway -y --config base_url=… --config
+auth_token=…` (`--local DIR` uses the repo folder for dev). With
+`--agent-usage` it also merges `ctrl+x o` = `abovePrompt:toggle` into
+`~/.claude/keybindings.json` (`src/keybindings.rs`), the chord that collapses
+the quota band: a plugin cannot register one (`plugin.json` has no
+`keybindings` field; the mods API only lets a `Button` reference an existing
+engine action), so this is a user binding, merged not overwritten —
+additive by default (`--move-keybinding` also unbinds `ctrl+x ctrl+a`),
+`--no-keybinding` skips it, a chord bound to another action is left alone, and
+an unparseable file is an error rather than a silent reset. `ocg claude`
+never edits `~/.claude`: it writes `claude-settings.json` (0600, data dir) and
+execs `claude --settings <file>`, adding `--model <default_model>` only when
+the config pins one and the caller passed no `--model`.
 
 ## Architecture
 
@@ -121,6 +149,15 @@ Layers:
     silence; `sse` / `sse_error` — Anthropic frames, `sse_error` used as the
     terminal frame when the upstream stream fails after opening (no
     `message_delta`/`message_stop` on a failed turn).
+- **`stats.rs` / `install.rs` / `keybindings.rs`** — `stats` is the local token accounting behind
+  `ocg --status` (`UsageStats`, UTC day buckets, 7-day window, 0600 JSON at
+  `data_dir()/ocg.stats.json`, `OCG_STATS_FILE` override) and its pure
+  `render_report`; the forwards record into it, `GET /status` serves it and
+  `serve()` flushes it on a timer and on shutdown. `install` is the onboarding
+  path (config with a generated token, plugin installs via the marketplace,
+  the session-only `claude --settings` launcher), and `keybindings` is the
+  merge into `~/.claude/keybindings.json` that gives the band its hide/show
+  chord (pure `merge_keybinding` + the file write, 0600).
 - **`api/server.rs`** — Axum handlers and routing. The file wires the routes
   and owns the handler bodies, but most of the work lives in siblings it
   re-exports under `api::server::*`: `api/state.rs` (`AppState` — the catalog +
@@ -221,7 +258,8 @@ Layers:
   `tests/gateway.rs` is the Claude-compat canary and stays Claude-only,
   `tests/pair.rs` covers the v2 pair flow + catalog/providers/credentials
   (shim `opencode` + a loopback v2 mock), `tests/cache_usage.rs` covers cache
-  reporting, `tests/usage.rs` covers the `GET /usage` quota report. A new
+  reporting, `tests/usage.rs` covers the `GET /usage` quota report,
+  `tests/status.rs` covers token accounting + `GET /status` (`ocg --status`). A new
   feature gets its **own** test file (mirroring the helpers of the file it is
   nearest to) instead of editing an existing one, so a
   regression is still measured exactly where it always was. All of them boot a
@@ -242,5 +280,7 @@ Layers:
 
 Maintenance rules that bite if ignored: `src/domain/` stays pure (no tokio,
 axum or rusqlite — the module doc says so); adding an `AppConfig` field also
-means adding it (commented) to `CONFIG_TEMPLATE` or `template_documents_every_config_key`
-fails; and `CLAUDE.md`/`AGENTS.md` are mirrors — change both.
+means adding it (commented) to `CONFIG_TEMPLATE` (`src/config.rs`) or
+`template_documents_every_config_key` fails; `INSTALL_TEMPLATE` is now
+`include_str!("../config.example.toml")` (direct copy, so `example_config_loads`
+covers it too); and `CLAUDE.md`/`AGENTS.md` are mirrors — change both.

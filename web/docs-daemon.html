@@ -71,7 +71,7 @@
         <a class="tag" href="docs.html">índice</a>
       </div>
       <h1>Daemon e CLI</h1>
-      <p class="docs-lead">O gateway roda como daemon em background. Ciclo de vida e auto-start são <b>separados de propósito</b>: <code class="mono">--start</code>/<code class="mono">--stop</code> nunca tocam no auto-start, e <code class="mono">--enable</code>/<code class="mono">--disable</code> nunca iniciam nem param um gateway em execução.</p>
+      <p class="docs-lead">O gateway roda como daemon em background. Ciclo de vida e auto-start são <b>separados de propósito</b>: <code class="mono">--start</code>/<code class="mono">--stop</code> nunca tocam no auto-start, e <code class="mono">--enable</code>/<code class="mono">--disable</code> nunca iniciam nem param um gateway em execução. O <code class="mono">--status</code> também mostra o uso por modelo da semana.</p>
     </header>
 
     <section id="flags">
@@ -83,7 +83,9 @@
         <tbody>
           <tr><td>--start [--port N]</td><td>daemon</td><td>Sobe o filho destacado com <code class="mono">--serve</code>, espera <code class="mono">/health</code> e imprime os <code class="mono">export</code> do Claude Code.</td></tr>
           <tr><td>--stop</td><td>daemon</td><td>SIGTERM (drena streams SSE) e limpa o estado.</td></tr>
-          <tr><td>--status</td><td>daemon</td><td>Se está rodando, em qual porta, se responde, e se o auto-start está ligado.</td></tr>
+          <tr><td>--status</td><td>daemon</td><td>Versão, se está rodando, porta, uptime, auto-start e os modelos mais usados nos últimos 7 dias (ver abaixo).</td></tr>
+          <tr><td>install [--agent-usage] [--browser]</td><td>onboarding</td><td>Cria o config (cópia do example + token gerado) e, opcionalmente, instala os plugins. Nunca toca em <code class="mono">~/.claude</code>. Veja <a href="docs-instalacao.html">Instalação</a>.</td></tr>
+          <tr><td>claude [-- args]</td><td>launcher</td><td>Sobe o gateway se preciso e abre o Claude Code com um <code class="mono">--settings</code> só da sessão. Veja <a href="docs-cli.html">Claude Code CLI</a>.</td></tr>
           <tr><td>--enable</td><td>auto-start</td><td>Instala e habilita o systemd user service (<code class="mono">~/.config/systemd/user/ocg.service</code>, <code class="mono">ExecStart=&lt;bin&gt; --serve</code>). Não inicia agora.</td></tr>
           <tr><td>--disable</td><td>auto-start</td><td>Remove o auto-start. Não para um gateway rodando.</td></tr>
           <tr><td>--serve</td><td>foreground</td><td>Servidor em primeiro plano (dev e filho do daemon). Logs no terminal via <code class="mono">RUST_LOG</code>.</td></tr>
@@ -93,11 +95,39 @@
       </div>
     </section>
 
+    <section id="status">
+      <h2><code class="mono">ocg --status</code> e o uso por modelo</h2>
+      <p>Além da saúde do daemon, o status resume os <b>modelos mais usados nos últimos 7 dias</b>, por tokens (entrada + saída reportados pelo upstream), com a participação de cada um no total e a conversão do alias:</p>
+      <div class="term">
+        <div class="term-h">
+          <span>shell</span>
+          <button class="copy" type="button" data-copy="ocg --status">copiar</button>
+        </div>
+        <pre><span class="c">$</span> <span class="k">ocg</span> --status
+ocg 0.4.1 · running (pid 4821, port 3737, healthy) · up 3h12m
+auto-start: enabled
+
+Most used models · last 7 days · 4.20M tokens · 1.20M cached
+  claude-sonnet-5 → opencode-go/deepseek-v4.1-flash          58.3%  2.45M  312 req
+  claude-opus-5 → github-copilot/gpt-6-luna                  22.1%  930.0K  138 req
+  claude-haiku-4-5 → opencode-go/muse-spark-1.3               9.3%  390.0K   77 req
+  opencode-go/glm-5.3-flash (direct ref)                      7.9%  330.0K   37 req
+  claude-opus-4-8#fast → github-copilot/gpt-6-luna            2.4%  100.0K   15 req
+  total                                                      100.0%  4.20M  579 req</pre>
+      </div>
+      <ul>
+        <li>Grava só requisições bem-sucedidas (2xx), com o <code class="mono">usage</code> que o upstream reportou — inclusive no streaming. Upstream que não reporta <code class="mono">usage</code> conta 0 tokens; as requisições continuam contadas.</li>
+        <li>Com o daemon no ar, o status lê <code class="mono">GET /status</code> (memória, mais novo); parado, lê o <code class="mono">ocg.stats.json</code> já gravado.</li>
+        <li>Buckets por dia (UTC), podados além de 7 dias. Persistidos a cada minuto e no shutdown. <code class="mono">OCG_STATS_FILE</code> sobrepõe o caminho.</li>
+      </ul>
+    </section>
+
     <section id="arquivos">
       <h2>Arquivos</h2>
       <ul>
         <li><b>Config:</b> <code class="mono">~/.config/opencode-claude-gateway/config.toml</code> — ou <code class="mono">--config</code> / <code class="mono">OCG_CONFIG</code>.</li>
-        <li><b>Estado:</b> <code class="mono">~/.local/share/opencode-claude-gateway/</code> com <code class="mono">ocg.pid</code>, <code class="mono">ocg.port</code>, <code class="mono">ocg.session</code>, <code class="mono">ocg.pair</code> e <code class="mono">ocg.log</code>. Todos criados <code class="mono">0600</code>.</li>
+        <li><b>Estado:</b> <code class="mono">~/.local/share/opencode-claude-gateway/</code> com <code class="mono">ocg.pid</code>, <code class="mono">ocg.port</code>, <code class="mono">ocg.session</code>, <code class="mono">ocg.pair</code>, <code class="mono">ocg.stats.json</code> (uso por modelo) e <code class="mono">ocg.log</code>. Todos criados <code class="mono">0600</code>.</li>
+        <li><b>Launcher:</b> <code class="mono">claude-settings.json</code> no mesmo diretório de estado — gerado e reescrito por <code class="mono">ocg claude</code>.</li>
         <li><b>Log:</b> <code class="mono">ocg.log</code>, só-append. Acompanhe com <code class="mono">tail -f</code>; o arquivo cresce com o uso.</li>
         <li><b>Auto-start:</b> <code class="mono">~/.config/systemd/user/ocg.service</code>.</li>
       </ul>

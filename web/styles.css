@@ -504,6 +504,31 @@ section[id]{scroll-margin-top:4.5rem}
 .docs-card p{margin:0;font-size:.9rem;color:var(--body);max-width:none}
 .docs-card .tag{margin:0}
 
+/* ——— steps: numbered install walkthrough ——— */
+.docs-body ol.steps{counter-reset:step;padding:0;margin:1.5rem 0 0;border-top:var(--hair) solid var(--rule);max-width:72ch}
+.docs-body ol.steps > li{
+  counter-increment:step;list-style:none;position:relative;
+  padding:1.15rem 0 1.15rem 2.6rem;border-bottom:var(--hair) solid var(--rule);
+}
+.docs-body ol.steps > li::before{
+  content:counter(step,decimal-leading-zero);position:absolute;left:0;top:1.2rem;
+  font-family:var(--f-mono);font-size:.72rem;letter-spacing:.05em;color:var(--wire-b);
+}
+.docs-body ol.steps h3{margin:0 0 .35rem;font-size:.98rem;font-weight:600;color:var(--ink)}
+.docs-body ol.steps p{margin:.35rem 0 0;font-size:.92rem;color:var(--body);max-width:66ch}
+.docs-body ol.steps .term{margin-top:.7rem}
+
+/* ——— path rows: where each OS keeps the files ——— */
+.paths{margin:1.25rem 0 0;border:var(--hair) solid var(--rule-strong);border-radius:var(--r);overflow:hidden}
+.paths .row{display:grid;grid-template-columns:minmax(7rem,auto) 1fr;gap:0}
+.paths .row + .row{border-top:var(--hair) solid var(--rule)}
+.paths dt{padding:.6rem .85rem;font-family:var(--f-mono);font-size:.72rem;letter-spacing:.03em;color:var(--body);background:var(--paper-lift);border-right:var(--hair) solid var(--rule)}
+.paths dd{margin:0;padding:.6rem .85rem;font-family:var(--f-mono);font-size:.76rem;line-height:1.6;overflow-wrap:anywhere}
+@media(max-width:640px){
+  .paths .row{grid-template-columns:1fr}
+  .paths dt{border-right:0;border-bottom:var(--hair) solid var(--rule)}
+}
+
 /* ——— mobile sidebar disclosure ——— */
 .docs-nav-toggle{
   display:none;align-items:center;gap:.5rem;
