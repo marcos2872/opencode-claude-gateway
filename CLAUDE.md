@@ -60,10 +60,12 @@ destination conversion) from `src/stats.rs`; it reads `GET /status` from a
 running daemon (in-memory counters) and falls back to the flushed
 `ocg.stats.json` when the daemon is down.
 
-Onboarding is `src/install.rs`: `ocg install` seeds the config at
-`--config`/`OCG_CONFIG`/the XDG default with a generated `auth_token` and the
-pinned family aliases **commented out** (never overwrites without `--force`,
-which keeps a dated `.bak`); `--agent-usage [alias --agent-use]` and
+Onboarding is `src/install.rs`: `ocg install` writes the config at
+`--config`/`OCG_CONFIG`/the XDG default as a **direct copy of
+`config.example.toml`** (`include_str!`), substituting only the top-level
+`auth_token = ""` with a generated token — the aliases ship exactly as the
+example pins them, one source of truth. It never overwrites without `--force`
+(which keeps a dated `.bak`); `--agent-usage [alias --agent-use]` and
 `--browser` run `claude plugin install <name> --marketplace
 marcos2872/opencode-claude-gateway -y --config base_url=… --config
 auth_token=…` (`--local DIR` uses the repo folder for dev). `ocg claude`
@@ -266,7 +268,7 @@ Layers:
 
 Maintenance rules that bite if ignored: `src/domain/` stays pure (no tokio,
 axum or rusqlite — the module doc says so); adding an `AppConfig` field also
-means adding it (commented) to both `CONFIG_TEMPLATE` (`src/config.rs`) and
-`INSTALL_TEMPLATE` (`src/install.rs`) or `template_documents_every_config_key`
-/ `template_mentions_every_appconfig_key` fail; and `CLAUDE.md`/`AGENTS.md` are
-mirrors — change both.
+means adding it (commented) to `CONFIG_TEMPLATE` (`src/config.rs`) or
+`template_documents_every_config_key` fails; `INSTALL_TEMPLATE` is now
+`include_str!("../config.example.toml")` (direct copy, so `example_config_loads`
+covers it too); and `CLAUDE.md`/`AGENTS.md` are mirrors — change both.

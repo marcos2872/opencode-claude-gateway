@@ -3,9 +3,9 @@
 //!
 //! Three surfaces, kept deliberately separate:
 //!
-//! - [`install_config`] writes `config.toml` with a generated `auth_token` and
-//!   the pinned family aliases **commented out** (opt-in), so a fresh install
-//!   works without sending the client a credential it has to guess. It never
+//! - [`install_config`] writes `config.toml` as a **direct copy** of the
+//!   shipped `config.example.toml`, substituting only a generated `auth_token`
+//!   so the client has a credential from the first request. It never
 //!   overwrites an existing config unless `--force` (which keeps a `.bak`).
 //! - [`install_plugin`] shells out to `claude plugin install <name>
 //!   --marketplace <repo>`: the repository already ships a marketplace, so a
@@ -24,140 +24,26 @@ pub const MARKETPLACE: &str = "marcos2872/opencode-claude-gateway";
 pub const AGENT_USAGE_PLUGIN: &str = "agent-usage";
 pub const BROWSER_PLUGIN: &str = "browser-relay";
 
-/// Installable config, seeded by `ocg install`. Mirrors `CONFIG_TEMPLATE` plus
-/// a real `auth_token` and the pinned family aliases as a commented block (the
-/// first run must not silently reroute Claude's side queries: the user opts in
-/// by uncommenting). `{token}` is replaced by [`install_config_text`].
-pub const INSTALL_TEMPLATE: &str = r#"# opencode-claude-gateway — config.toml (written by `ocg install`).
-# Reference: docs/configuracao.md · full example: config.example.toml
-# Edited config is read at boot: `ocg --stop && ocg --start` to apply
-# (or `systemctl --user restart ocg` when auto-start is enabled).
+/// Installable config: the shipped `config.example.toml` **verbatim**, with the
+/// generated `auth_token` substituted (`INSTALL_CONFIG_ANCHOR` marks the spot).
+/// A direct copy so the aliases the example pins are exactly what a fresh
+/// install gets and there is a single source of truth to maintain.
+pub const INSTALL_TEMPLATE: &str = include_str!("../config.example.toml");
 
-# Port the gateway listens on (always 127.0.0.1).
-port = 3737
-
-# Gateway credential the client must send (ANTHROPIC_AUTH_TOKEN / x-api-key).
-# Generated on install. `ocg claude` reads it automatically; a client wired by
-# hand (`~/.claude/settings.json`) must copy this value.
-auth_token = "{token}"
-
-# Used when the client omits "model". Empty = first alias alphabetically.
-default_model = ""
-
-# OpenCode binary used for pairing, catalog and db-path discovery.
-# opencode_bin = "opencode"
-
-# Use the OpenCode v2 pair API to obtain a session token, then read the
-# catalog and provider credentials over HTTP. Off = CLI + SQLite fallback.
-# opencode_pair = true
-
-# OpenCode v2 server URL. Empty = discover from the selected service.
-# opencode_url = ""
-
-# Include Console free-tier (`opencode/*`) models in /v1/models.
-# include_free_tier = false
-
-# Rewrite advertised ids to dodge Claude Desktop's third-party denylist.
-# desktop_aliases = false
-
-# Shield Claude Code CLI background calls from family-spelling catalog rows.
-# cli_shield_aliases = true
-
-# Answer Claude Code's auto-mode classifier and liveness probes locally.
-# mock_classifier = false
-
-# Upstream transport timeouts, in seconds.
-# connect_timeout_secs = 30
-# request_timeout_secs = 3600
-
-# ── optional: pin the first-party family ids (off by default) ─────────────
-# Claude Code sends hardcoded ids on its own (claude-sonnet-5, claude-opus-4-8,
-# claude-haiku-4-5, ...) for side queries, small_fast and family fallbacks.
-# Without a manual alias those hit the catalog's plain-id match, which sorts
-# by provider/model and can land on a Copilot or free-tier row. Uncomment the
-# block below to pin each family to the model you want — the refs are examples
-# from the catalog, so check them with `ocg --refresh` first:
-#
-#   haiku*  -> opencode-go/muse-spark-1.3-contributor  (cheap/background)
-#   sonnet* -> opencode-go/deepseek-v4.1-flash         (workhorse)
-#   opus*   -> github-copilot/gpt-6-luna               (heaviest)
-#   fable*  -> github-copilot/gpt-6-luna
-#
-# [aliases."claude-haiku-4-5"]
-# opencode = "opencode-go/muse-spark-1.3-contributor"
-# display_name = "Haiku 4.5 -> Muse Spark 1.3"
-#
-# [aliases."claude-haiku-5-5"]
-# opencode = "opencode-go/muse-spark-1.3-contributor"
-# display_name = "Haiku 5.5 -> Muse Spark 1.3"
-#
-# [aliases."claude-sonnet-4-5"]
-# opencode = "opencode-go/deepseek-v4.1-flash"
-# display_name = "Sonnet 4.5 -> DeepSeek V4.1 Flash"
-#
-# [aliases."claude-sonnet-4-6"]
-# opencode = "opencode-go/deepseek-v4.1-flash"
-# display_name = "Sonnet 4.6 -> DeepSeek V4.1 Flash"
-#
-# [aliases."claude-sonnet-5"]
-# opencode = "opencode-go/deepseek-v4.1-flash"
-# display_name = "Sonnet 5 -> DeepSeek V4.1 Flash"
-#
-# [aliases."claude-sonnet-5-5"]
-# opencode = "opencode-go/deepseek-v4.1-flash"
-# display_name = "Sonnet 5.5 -> DeepSeek V4.1 Flash"
-#
-# [aliases."claude-opus-4-5"]
-# opencode = "github-copilot/gpt-6-luna"
-# display_name = "Opus 4.5 -> GPT-6 Luna"
-#
-# [aliases."claude-opus-4-6"]
-# opencode = "github-copilot/gpt-6-luna"
-# display_name = "Opus 4.6 -> GPT-6 Luna"
-#
-# [aliases."claude-opus-4-7"]
-# opencode = "github-copilot/gpt-6-luna"
-# display_name = "Opus 4.7 -> GPT-6 Luna"
-#
-# [aliases."claude-opus-4-8"]
-# opencode = "github-copilot/gpt-6-luna"
-# display_name = "Opus 4.8 -> GPT-6 Luna"
-#
-# [aliases."claude-opus-5"]
-# opencode = "github-copilot/gpt-6-luna"
-# display_name = "Opus 5 -> GPT-6 Luna"
-#
-# [aliases."claude-opus-5-5"]
-# opencode = "github-copilot/gpt-6-luna"
-# display_name = "Opus 5.5 -> GPT-6 Luna"
-#
-# [aliases."claude-fable-5"]
-# opencode = "github-copilot/gpt-6-luna"
-# display_name = "Fable 5 -> GPT-6 Luna"
-#
-# [aliases."claude-fable-5-1"]
-# opencode = "github-copilot/gpt-6-luna"
-# display_name = "Fable 5.1 -> GPT-6 Luna"
-#
-# [aliases."claude-fable-5-2"]
-# opencode = "github-copilot/gpt-6-luna"
-# display_name = "Fable 5.2 -> GPT-6 Luna"
-
-# ── optional: Anthropic family tiers (Claude Desktop) ─────────────────────
-# [tiers."opencode-go/muse-spark-1.3-contributor"]
-# tier = "haiku"
-# family_default = true
-
-# ── optional: hide rows from /v1/models ───────────────────────────────────
-# [disabled]
-# models = [
-#   "opencode-go/some-model",
-# ]
-"#;
+/// The example's `auth_token` line, replaced on install. Matched with the
+/// surrounding newline so a doc comment mentioning the key can't be hit.
+const INSTALL_CONFIG_ANCHOR: &str = "\nauth_token = \"\"\n";
 
 /// `INSTALL_TEMPLATE` with the generated token substituted.
 pub fn install_config_text(token: &str) -> String {
-    INSTALL_TEMPLATE.replace("{token}", token)
+    let anchor = format!("\nauth_token = \"{token}\"\n");
+    // Fail loudly if the example ever renames the key: a silent no-substitution
+    // would ship a config whose token no client knows.
+    assert!(
+        INSTALL_TEMPLATE.contains(INSTALL_CONFIG_ANCHOR),
+        "config.example.toml must contain a top-level `auth_token = \"\"` line"
+    );
+    INSTALL_TEMPLATE.replacen(INSTALL_CONFIG_ANCHOR, &anchor, 1)
 }
 
 /// A gateway credential. 122 random bits, RFC 4122 v4 shape, hex-only so it
@@ -431,36 +317,36 @@ mod tests {
     }
 
     #[test]
-    fn template_parses_with_token_and_no_aliases() {
+    fn install_text_is_the_shipped_example_with_a_token() {
         let text = install_config_text("abc123");
-        let cfg: AppConfig = toml::from_str(&text).expect("install template must parse");
+        let cfg: AppConfig = toml::from_str(&text).expect("install text must parse");
         assert_eq!(cfg.auth_token, "abc123");
         assert_eq!(cfg.port, 3737);
-        assert!(cfg.aliases.is_empty(), "aliases must stay commented");
+        // Whatever the example pins is what ships: the copy must not filter,
+        // reorder or uncomment anything (aliases included).
+        let example: AppConfig = toml::from_str(include_str!("../config.example.toml")).unwrap();
+        assert_eq!(cfg.aliases, example.aliases);
+        assert_eq!(cfg.tiers, example.tiers);
+        assert_eq!(cfg.default_model, example.default_model);
+        // Only the token differs from the file in the repository.
+        assert_eq!(
+            text,
+            include_str!("../config.example.toml").replacen(
+                "\nauth_token = \"\"\n",
+                "\nauth_token = \"abc123\"\n",
+                1
+            ),
+        );
     }
 
     #[test]
-    fn template_mentions_every_appconfig_key() {
-        for key in [
-            "port = ",
-            "auth_token = ",
-            "default_model = ",
-            "# opencode_bin = ",
-            "# opencode_pair = ",
-            "# opencode_url = ",
-            "# include_free_tier = ",
-            "# desktop_aliases = ",
-            "# cli_shield_aliases = ",
-            "# mock_classifier = ",
-            "# connect_timeout_secs = ",
-            "# request_timeout_secs = ",
-            "# [aliases.",
-            "# [tiers.",
-            "# [disabled]",
-        ] {
+    fn every_example_alias_ref_is_qualified() {
+        let cfg: AppConfig = toml::from_str(&install_config_text("t")).unwrap();
+        for (id, alias) in &cfg.aliases {
             assert!(
-                INSTALL_TEMPLATE.contains(key),
-                "missing `{key}` in install template"
+                alias.opencode.contains('/'),
+                "alias `{id}` must use a `provider/model` ref, got `{}`",
+                alias.opencode
             );
         }
     }

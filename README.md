@@ -61,7 +61,7 @@ ocg --version
 Depois de instalar o binário, um comando deixa a máquina pronta:
 
 ```bash
-ocg install            # cria o config com auth_token gerado, aliases comentados
+ocg install            # cria o config (cópia do example) com auth_token gerado
 ocg install --agent-usage --browser   # + plugins do Claude Code (cota, abas do Chrome)
 ocg claude             # abre o Claude Code contra o gateway, sem tocar em ~/.claude
 ocg --status           # saúde + modelos mais usados na semana (% do total de tokens)
@@ -69,8 +69,8 @@ ocg --status           # saúde + modelos mais usados na semana (% do total de t
 
 O `ocg install` **não** edita `~/.claude/settings.json`: ele gera um
 `~/.config/opencode-claude-gateway/config.toml` (0600) com um `auth_token`
-pronto, o bloco de aliases fixando a família **comentado** (descomente o que
-quiser) e, com `--agent-usage`/`--browser`, instala os plugins pelo marketplace
+pronto: é uma **cópia direta do `config.example.toml`**, só com o `auth_token`
+substituído pelo gerado e, com `--agent-usage`/`--browser`, instala os plugins pelo marketplace
 do repositório. O `ocg claude` sobe o daemon se preciso e abre o CLI com um
 `--settings` só daquela sessão; a configuração global do Claude fica intacta.
 

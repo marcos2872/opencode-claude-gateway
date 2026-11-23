@@ -11,8 +11,10 @@ como o gateway resolve modelos e aliases.
 
 Arquivo: `~/.config/opencode-claude-gateway/config.toml` (veja
 [`config.example.toml`](../config.example.toml)).
-**`ocg install`** cria esse arquivo (0600) já com um `auth_token` gerado e o
-bloco de aliases que fixa a família **comentado** — descomente o que quiser.
+**`ocg install`** cria esse arquivo (0600) como **cópia direta do
+[`config.example.toml`](../config.example.toml)**, trocando só o `auth_token`
+pelo gerado — os aliases (e o que estiver ativo/comentado no example) vêm como
+estão lá.
 Sem `ocg install` (ou num path via `--config`/`OCG_CONFIG` que ainda não
 existe), o primeiro run cria o arquivo com todas as opções comentadas.
 O `install` respeita `--config`/`OCG_CONFIG`; num arquivo existente ele não
@@ -26,7 +28,7 @@ O config é lido **no boot** — mudanças exigem reiniciar o gateway
 ## Instalação em um comando (`ocg install`)
 
 ```bash
-ocg install                        # config com token + aliases comentados
+ocg install                        # cópia do config.example + token gerado
 ocg install --agent-usage          # + mod de cota (alias: --agent-use)
 ocg install --browser              # + browser-relay (precisa de bun)
 ocg install --force                # regrava o config (backup .bak)
