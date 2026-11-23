@@ -98,6 +98,31 @@ o MCP). Verificação rápida: `curl -s http://127.0.0.1:8799/health` deve
 mostrar `{"connected":true,...}`; o token do arquivo tem que ser o mesmo que o
 relay aceita.
 
+## Outros erros: `relay respondeu HTTP 4xx/5xx: <motivo>`
+
+Fora do `403` de token, o relay do OpenCode responde os erros de uma tool com
+status `500` e um corpo `{"ok":false,"error":"<motivo>"}`. O servidor repassa
+esse `error` junto do status, então a mensagem que chega ao modelo já diz o que
+aconteceu:
+
+| Mensagem | Causa |
+|---|---|
+| `HTTP 500: Ref ref_3 not found.` | a ref veio de uma leitura anterior e a página já navegou (ou a extensão recriou a árvore). Rode `read_page`/`find` de novo e use a ref nova. |
+| `HTTP 500: Only http(s) navigation is allowed.` | `navigate` para `about:blank` ou `file://`. Use uma URL `http(s)`. |
+| `HTTP 503: <extensão não conectada>` | a extensão não está aberta/conectada no Chrome. |
+| `HTTP 500: <timeout>` | a extensão não respondeu em 180 s; a chamada foi cancelada. |
+
+Versões anteriores a esta mostravam só `relay respondeu HTTP 500`, sem o motivo.
+
+## Testes
+
+```bash
+cd plugins/browser-relay/server && bun test
+```
+
+O servidor só sobe quando o arquivo é o ponto de entrada (`import.meta.main`),
+então o `bun test` importa `browser-mcp.ts` sem abrir relay nem tocar no stdin.
+
 ## Cuidados
 
 - `javascript_tool` executa código na página; `update_plan` pede aprovação de

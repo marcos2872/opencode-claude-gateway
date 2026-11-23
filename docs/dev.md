@@ -126,6 +126,18 @@ Com o marketplace apontando para a pasta local, editar o plugin e rodar
 access: `.claude-plugin/types/claude-code/index.d.ts` (regravado a cada load)
 é a referência da build atual.
 
+Os testes dos plugins usam runners diferentes, conforme o formato:
+
+```bash
+claude plugin test plugins/agent-usage              # mod de hooks (API claude-code/testing)
+cd plugins/browser-relay/server && bun test         # servidor MCP (bun:test)
+```
+
+O `bun test` puro não resolve `claude-code/testing` — o mod só roda no runner do
+host. `browser-mcp.ts` só sobe o relay e o canal stdio quando é o ponto de
+entrada (`import.meta.main`), para que importá-lo num teste não sequestre o
+processo.
+
 ## Landing page e documentação (`web/`)
 
 O site é estático, sem build step, e é publicado como está pelo workflow

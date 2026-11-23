@@ -357,7 +357,7 @@ function ensureServer() {
 // próprio plugin usa entre processos.
 // ---------------------------------------------------------------------------
 
-type RemoteRelay = { port: number; token: string }
+export type RemoteRelay = { port: number; token: string }
 
 function relayDir(): string {
   const runtime = process.env.XDG_RUNTIME_DIR?.trim()
@@ -438,8 +438,8 @@ async function refreshRemote(previous: RemoteRelay | null): Promise<RemoteRelay 
   return info
 }
 
-/** Chama a tool por HTTP no relay de outro processo. */
-async function callRemote(relay: RemoteRelay, tool: string, args: Record<string, unknown>) {
+/** Chama a tool por HTTP no relay de outro processo. Exportada para os testes. */
+export async function callRemote(relay: RemoteRelay, tool: string, args: Record<string, unknown>) {
   const response = await fetch(`http://127.0.0.1:${relay.port}/tool`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-relay-token": relay.token },
@@ -458,8 +458,17 @@ async function callRemote(relay: RemoteRelay, tool: string, args: Record<string,
         "apague o relay.json em $XDG_RUNTIME_DIR/opencode-browser/ e reabra o OpenCode.",
     }
   }
+  // Any other failure still carries the real reason in the body — the OpenCode
+  // relay answers `500 {"ok":false,"error":"Ref ref_1 not found."}` for a stale
+  // ref, `500 {"ok":false,"error":"Only http(s) navigation is allowed."}` for
+  // `about:blank`, and `503 {"ok":false,"error":NOT_CONNECTED}` with the
+  // extension detached. Dropping the body leaves the caller with a bare status
+  // code that says nothing about what to do next.
   if (!response.ok) {
-    return { ok: false as const, error: `relay respondeu HTTP ${response.status}` }
+    const body = (await response.json().catch(() => null)) as unknown
+    const detail =
+      isRecord(body) && typeof body.error === "string" && body.error ? `: ${body.error}` : ""
+    return { ok: false as const, error: `relay respondeu HTTP ${response.status}${detail}` }
   }
   const data = (await response.json()) as unknown
   if (!isRecord(data)) throw new Error("resposta inválida do relay")
@@ -864,33 +873,39 @@ async function onLine(line: string) {
   }
 }
 
-process.stdin.setEncoding("utf8")
-process.stdin.on("data", (chunk: string) => {
-  buffer += chunk
-  let index = buffer.indexOf("\n")
-  while (index >= 0) {
-    const line = buffer.slice(0, index)
-    buffer = buffer.slice(index + 1)
-    void onLine(line)
-    index = buffer.indexOf("\n")
-  }
-})
+function startStdio() {
+  process.stdin.setEncoding("utf8")
+  process.stdin.on("data", (chunk: string) => {
+    buffer += chunk
+    let index = buffer.indexOf("\n")
+    while (index >= 0) {
+      const line = buffer.slice(0, index)
+      buffer = buffer.slice(index + 1)
+      void onLine(line)
+      index = buffer.indexOf("\n")
+    }
+  })
 
-process.stdin.on("end", () => {
-  for (const [id, item] of state.pending) {
-    clearTimeout(item.timer)
-    state.pending.delete(id)
-    item.reject(new Error("O servidor MCP encerrou."))
-  }
-  process.exit(0)
-})
+  process.stdin.on("end", () => {
+    for (const [id, item] of state.pending) {
+      clearTimeout(item.timer)
+      state.pending.delete(id)
+      item.reject(new Error("O servidor MCP encerrou."))
+    }
+    process.exit(0)
+  })
+}
 
 async function main() {
   // Never steal the extension from a relay that already has it: reuse first,
   // and only listen when nobody else does.
   remote = await discoverRemote()
   if (!remote) ensureServer()
+  startStdio()
   log(remote ? `MCP pronto via relay :${remote.port}` : "MCP pronto (stdin/stdout)")
 }
 
-void main()
+// Under `bun test` the module is imported by the test runner: wiring stdin and
+// a relay there would hijack the test process (the `end` handler alone exits
+// it), so only boot when this file is the entry point.
+if (import.meta.main) void main()

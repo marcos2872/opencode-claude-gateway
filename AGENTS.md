@@ -24,6 +24,9 @@ cargo run -- --status         # daemon state + the week's model usage
 cargo run -- install          # seed config (generated token) + optional plugins
 cargo run -- claude           # open Claude Code against the gateway (session settings)
 ./scripts/dev.sh              # dev server: isolated config/token/pair in target/dev/
+
+claude plugin test plugins/agent-usage           # Claude Code mod (host test API)
+cd plugins/browser-relay/server && bun test        # browser-relay MCP server tests
 ```
 ```
 
