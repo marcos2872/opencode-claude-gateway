@@ -71,11 +71,31 @@
         <a class="tag" href="docs.html">índice</a>
       </div>
       <h1>Claude Code CLI</h1>
-      <p class="docs-lead">Três variáveis e o CLI fala com o gateway. O modelo é escolhido no <code class="mono">/model</code>, alimentado pelo <code class="mono">/v1/models</code>.</p>
+      <p class="docs-lead">O caminho principal é o launcher <code class="mono">ocg claude</code>: ele abre o CLI apontado para o gateway <b>sem tocar em <code class="mono">~/.claude</code></b>. Se você quer o gateway em toda sessão, fixe as variáveis uma vez (a alternativa abaixo). O modelo é escolhido no <code class="mono">/model</code>, alimentado pelo <code class="mono">/v1/models</code>.</p>
     </header>
 
+    <section id="launcher">
+      <h2>Caminho principal: <code class="mono">ocg claude</code></h2>
+      <p>Um comando. O launcher sobe o gateway se ele ainda não estiver no ar, escreve um <code class="mono">claude-settings.json</code> só da sessão e roda <code class="mono">claude --settings &lt;arquivo&gt;</code>. Como <code class="mono">--settings</code> tem precedência sobre <code class="mono">~/.claude/settings.json</code>, só esta sessão fala com o gateway — a configuração global e o login da Anthropic continuam como estavam.</p>
+      <div class="term">
+        <div class="term-h">
+          <span>shell</span>
+          <button class="copy" type="button" data-copy="ocg claude                         # abre o Claude Code no gateway&#10;ocg claude -- --resume            # argumentos depois de -- vão para o claude&#10;ocg claude -- -p &quot;resuma este repo&quot;">copiar</button>
+        </div>
+        <pre><span class="c">$</span> <span class="k">ocg</span> claude                         <span class="c"># abre o Claude Code no gateway</span>
+<span class="c">$</span> <span class="k">ocg</span> claude -- --resume            <span class="c"># argumentos depois de -- vão para o claude</span>
+<span class="c">$</span> <span class="k">ocg</span> claude -- -p <span class="s">"resuma este repo"</span></pre>
+      </div>
+      <ul>
+        <li>Segue a porta do daemon que ele mesmo gerencia: se você subiu com <code class="mono">ocg --start --port 3940</code>, o launcher usa 3940.</li>
+        <li>Se o <code class="mono">config.toml</code> tiver <code class="mono">default_model</code>, ele vira <code class="mono">--model</code> — a menos que você já tenha passado um <code class="mono">--model</code>.</li>
+        <li>O arquivo de settings fica em <code class="mono">~/.local/share/opencode-claude-gateway/claude-settings.json</code> (0600) e é reescrito a cada <code class="mono">ocg claude</code>.</li>
+      </ul>
+    </section>
+
     <section id="env">
-      <h2>Variáveis de ambiente</h2>
+      <h2>Alternativa: variáveis de ambiente (toda sessão)</h2>
+      <p>Use quando quiser que <b>todo</b> <code class="mono">claude</code> já nasça no gateway, sem passar pelo launcher.</p>
       <div class="term">
         <div class="term-h">
           <span>shell — sessão atual</span>
@@ -104,7 +124,7 @@ claude</pre>
   }
 }</pre>
       </div>
-      <p>Se já existe um <code class="mono">ANTHROPIC_BASE_URL</code> nesse arquivo apontando para outro backend, o <code class="mono">env</code> do arquivo vence os <code class="mono">export</code> do shell. Para usar o gateway só numa sessão, passe um settings temporário: <code class="mono">claude --settings '{"env":{…}}'</code> — o <code class="mono">--settings</code> tem precedência.</p>
+      <p>Se já existe um <code class="mono">ANTHROPIC_BASE_URL</code> nesse arquivo apontando para outro backend, o <code class="mono">env</code> do arquivo vence os <code class="mono">export</code> do shell. Para o gateway valer numa sessão só, prefira o <a href="#launcher"><code class="mono">ocg claude</code></a> — ou passe um settings temporário à mão: <code class="mono">claude --settings '{"env":{…}}'</code>, que tem a mesma precedência.</p>
     </section>
 
     <section id="discovery">

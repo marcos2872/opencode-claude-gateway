@@ -71,14 +71,14 @@
         <a class="tag" href="docs.html">índice</a>
       </div>
       <h1>config.toml</h1>
-      <p class="docs-lead">Arquivo em <code class="mono">~/.config/opencode-claude-gateway/config.toml</code>, criado no primeiro run com todas as opções comentadas (parseando para os defaults). Um arquivo inválido é <b>erro fatal</b> — nunca default silencioso.</p>
+      <p class="docs-lead">Arquivo em <code class="mono">~/.config/opencode-claude-gateway/config.toml</code>. O <code class="mono">ocg install</code> o cria como <b>cópia direta do <code class="mono">config.example.toml</code></b>, trocando só o <code class="mono">auth_token</code> por um gerado; sem <code class="mono">install</code>, o primeiro run semeia um template com todas as opções comentadas. Um arquivo inválido é <b>erro fatal</b> — nunca default silencioso.</p>
     </header>
 
     <section id="quando">
       <h2>Quando é lido</h2>
       <p>No <b>boot</b>. Depois de editar: <code class="mono">ocg --stop &amp;&amp; ocg --start</code>, ou <code class="mono">systemctl --user restart ocg</code> quando o auto-start está ligado.</p>
       <p>Overrides de ambiente: <code class="mono">--port</code>/<code class="mono">OCG_PORT</code>, <code class="mono">--config</code>/<code class="mono">OCG_CONFIG</code>, e <code class="mono">OCG_AUTH_TOKEN</code> (não-vazio sobrescreve o arquivo e é herdado pelo daemon filho).</p>
-      <p>Há duas superfícies independentes: o template semeado no primeiro run e o <code class="mono">config.example.toml</code> completo do repositório. Os dois são validados por teste.</p>
+      <p>O <code class="mono">ocg install</code> respeita <code class="mono">--config</code>/<code class="mono">OCG_CONFIG</code> e nunca sobrescreve um arquivo existente sem <code class="mono">--force</code> (que deixa um <code class="mono">.bak</code> datado). O <code class="mono">config.example.toml</code> é a fonte única do que a instalação escreve; o template semeado no primeiro run (sem <code class="mono">install</code>) continua existindo. Os dois são validados por teste.</p>
     </section>
 
     <section id="chaves">
