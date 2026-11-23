@@ -1,6 +1,6 @@
 /**
- * What the status line and `/agent-usage` read: the last report
- * `GET /usage` on the local gateway answered.
+ * What the band and `/agent-usage` read: the last report `GET /usage` on the
+ * local gateway answered.
  */
 export type UsagePayment = {
   /** Rolling 5h/weekly/monthly windows, as the gateway reports them. */

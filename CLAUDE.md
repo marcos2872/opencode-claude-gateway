@@ -68,7 +68,15 @@ example pins them, one source of truth. It never overwrites without `--force`
 (which keeps a dated `.bak`); `--agent-usage [alias --agent-use]` and
 `--browser` run `claude plugin install <name> --marketplace
 marcos2872/opencode-claude-gateway -y --config base_url=… --config
-auth_token=…` (`--local DIR` uses the repo folder for dev). `ocg claude`
+auth_token=…` (`--local DIR` uses the repo folder for dev). With
+`--agent-usage` it also merges `ctrl+x o` = `abovePrompt:toggle` into
+`~/.claude/keybindings.json` (`src/keybindings.rs`), the chord that collapses
+the quota band: a plugin cannot register one (`plugin.json` has no
+`keybindings` field; the mods API only lets a `Button` reference an existing
+engine action), so this is a user binding, merged not overwritten —
+additive by default (`--move-keybinding` also unbinds `ctrl+x ctrl+a`),
+`--no-keybinding` skips it, a chord bound to another action is left alone, and
+an unparseable file is an error rather than a silent reset. `ocg claude`
 never edits `~/.claude`: it writes `claude-settings.json` (0600, data dir) and
 execs `claude --settings <file>`, adding `--model <default_model>` only when
 the config pins one and the caller passed no `--model`.
@@ -139,13 +147,15 @@ Layers:
     silence; `sse` / `sse_error` — Anthropic frames, `sse_error` used as the
     terminal frame when the upstream stream fails after opening (no
     `message_delta`/`message_stop` on a failed turn).
-- **`stats.rs` / `install.rs`** — `stats` is the local token accounting behind
+- **`stats.rs` / `install.rs` / `keybindings.rs`** — `stats` is the local token accounting behind
   `ocg --status` (`UsageStats`, UTC day buckets, 7-day window, 0600 JSON at
   `data_dir()/ocg.stats.json`, `OCG_STATS_FILE` override) and its pure
   `render_report`; the forwards record into it, `GET /status` serves it and
   `serve()` flushes it on a timer and on shutdown. `install` is the onboarding
   path (config with a generated token, plugin installs via the marketplace,
-  the session-only `claude --settings` launcher).
+  the session-only `claude --settings` launcher), and `keybindings` is the
+  merge into `~/.claude/keybindings.json` that gives the band its hide/show
+  chord (pure `merge_keybinding` + the file write, 0600).
 - **`api/server.rs`** — Axum handlers and routing. The file wires the routes
   and owns the handler bodies, but most of the work lives in siblings it
   re-exports under `api::server::*`: `api/state.rs` (`AppState` — the catalog +

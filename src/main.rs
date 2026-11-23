@@ -1,5 +1,7 @@
 use clap::Parser;
-use opencode_claude_gateway::{api, autostart, cli, config, daemon, infra, install, stats};
+use opencode_claude_gateway::{
+    api, autostart, cli, config, daemon, infra, install, keybindings, stats,
+};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -129,6 +131,51 @@ fn run_install(
         }
         if args.browser && !matches!(args.scope.as_str(), "user") {
             println!("  note: browser-relay needs `bun` on PATH to start");
+        }
+    }
+
+    // The band's hide/show shortcut. A plugin cannot register a chord of its
+    // own (`plugin.json` has no `keybindings` field), so this is a user
+    // binding, merged into whatever ~/.claude/keybindings.json already has.
+    if args.agent_usage && !args.no_keybinding {
+        let path = keybindings::keybindings_path();
+        match keybindings::install_keybinding(
+            &path,
+            keybindings::BAND_TOGGLE_KEY,
+            keybindings::BAND_TOGGLE_CONTEXT,
+            args.move_keybinding,
+        )
+        .map_err(|e| anyhow::anyhow!(e))?
+        {
+            keybindings::BindingWrite::Created { .. } => println!(
+                "keybinding: {} = {} in {}",
+                keybindings::BAND_TOGGLE_KEY,
+                keybindings::BAND_TOGGLE_ACTION,
+                path.display()
+            ),
+            keybindings::BindingWrite::Added { .. } => println!(
+                "keybinding: added {} = {} to {}",
+                keybindings::BAND_TOGGLE_KEY,
+                keybindings::BAND_TOGGLE_ACTION,
+                path.display()
+            ),
+            keybindings::BindingWrite::Moved { .. } => println!(
+                "keybinding: {} = {} (and {} unbound) in {}",
+                keybindings::BAND_TOGGLE_KEY,
+                keybindings::BAND_TOGGLE_ACTION,
+                keybindings::BAND_TOGGLE_DEFAULT_KEY,
+                path.display()
+            ),
+            keybindings::BindingWrite::Already { .. } => println!(
+                "keybinding: {} already set in {}",
+                keybindings::BAND_TOGGLE_KEY,
+                path.display()
+            ),
+            keybindings::BindingWrite::Conflict { action, .. } => println!(
+                "keybinding: {} is already bound to `{action}` in {}; left as it was",
+                keybindings::BAND_TOGGLE_KEY,
+                path.display()
+            ),
         }
     }
 

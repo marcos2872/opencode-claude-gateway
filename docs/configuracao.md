@@ -33,13 +33,45 @@ ocg install --agent-usage          # + mod de cota (alias: --agent-use)
 ocg install --browser              # + browser-relay (precisa de bun)
 ocg install --force                # regrava o config (backup .bak)
 ocg install --local . --agent-usage  # plugins da pasta do repo (dev)
+ocg install --agent-usage --no-keybinding    # não mexe no keybindings.json
+ocg install --agent-usage --move-keybinding  # tira o ctrl+x ctrl+a padrão
 ```
 
 Os plugins vêm do marketplace do repositório
 (`claude plugin install <nome> --marketplace marcos2872/opencode-claude-gateway`),
 com `base_url`/`auth_token` já fixados no plugin. O `install` **não** sobe o
-daemon nem mexe no `~/.claude`: ele termina imprimindo os próximos comandos
-(`ocg --start`, `ocg claude`).
+daemon nem mexe no `settings.json` do `~/.claude`: ele termina imprimindo os
+próximos comandos (`ocg --start`, `ocg claude`).
+
+### Atalho da faixa (`--agent-usage`)
+
+Com `--agent-usage`, o `install` também escreve
+`~/.claude/keybindings.json` para dar um atalho que **esconde e mostra** a
+faixa da cota acima do prompt:
+
+```json
+{
+  "$schema": "https://www.schemastore.org/claude-code-keybindings.json",
+  "bindings": [
+    { "context": "Chat", "bindings": { "ctrl+x o": "abovePrompt:toggle" } }
+  ]
+}
+```
+
+O atalho é **aditivo**: o `ctrl+x ctrl+a` do engine continua valendo, a menos
+que você peça `--move-keybinding` (que grava `"ctrl+x ctrl+a": null`). O merge
+preserva tudo o que já existe no arquivo (outros contextos, outras teclas,
+`$schema`), nunca rouba um chord ligado a outra ação — nesse caso ele avisa e
+deixa como estava — e é idempotente. `--no-keybinding` pula esse passo.
+
+Por que o instalador faz isso, e não o plugin: o `plugin.json` **não** tem
+campo `keybindings` (o validador acusa campo desconhecido e ignora), e a API de
+mods só deixa um `Button` *referenciar* uma ação do engine, não criar um chord.
+Então o atalho é uma preferência do usuário, e é onde ele mora.
+
+A ação `abovePrompt:toggle` colapsa a **faixa inteira** acima do prompt, não
+só a linha do `agent-usage` — é o que o engine oferece. Funciona igual pela
+régua `[-]` no canto direito da faixa.
 
 ## Status e uso por modelo (`ocg --status`)
 

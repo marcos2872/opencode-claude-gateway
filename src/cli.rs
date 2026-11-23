@@ -91,6 +91,15 @@ pub struct InstallArgs {
     /// Plugin install scope: user | project | local.
     #[arg(long, default_value = "user")]
     pub scope: String,
+
+    /// Add the `ctrl+x o` shortcut that hides/shows the quota band in
+    /// ~/.claude/keybindings.json. On by default with --agent-usage.
+    #[arg(long)]
+    pub no_keybinding: bool,
+
+    /// Also unbind the engine's own `ctrl+x ctrl+a` for that toggle.
+    #[arg(long)]
+    pub move_keybinding: bool,
 }
 
 #[derive(Debug, Args)]

@@ -62,7 +62,7 @@ Depois de instalar o binário, um comando deixa a máquina pronta:
 
 ```bash
 ocg install            # cria o config (cópia do example) com auth_token gerado
-ocg install --agent-usage --browser   # + plugins do Claude Code (cota, abas do Chrome)
+ocg install --agent-usage --browser   # + plugins do Claude Code (cota, abas do Chrome; atalho ctrl+x o)
 ocg claude             # abre o Claude Code contra o gateway, sem tocar em ~/.claude
 ocg --status           # saúde + modelos mais usados na semana (% do total de tokens)
 ```
@@ -120,4 +120,4 @@ pre-commit opcional. Como rodar em dev, testes, release e a suíte de latência:
 - [Erros e diagnóstico](docs/erros.md) — `/health`, logs e tabela de sintomas.
 - [Desenvolvimento](docs/dev.md) — como rodar em dev, testes, lint, releases.
 - [Arquitetura](docs/arquitetura.md) — como o gateway é estruturado (domínio, infra, API).
-- [Plugins do Claude Code](plugins/) — mod `agent-usage`: cota do OpenCode Go (janelas + créditos) na linha de status.
+- [Plugins do Claude Code](plugins/) — mod `agent-usage`: cota do OpenCode Go (barras por janela, % e reset + créditos) na faixa acima do prompt, com resumo na linha de status.
