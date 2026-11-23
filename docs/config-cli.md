@@ -4,10 +4,37 @@
 [Desktop](config-desktop.md) · [Erros](erros.md) · [Dev](dev.md) ·
 [Arquitetura](arquitetura.md)
 
-Como apontar o **Claude Code** (CLI) para o gateway: variáveis de ambiente,
-`~/.claude/settings.json`, subagentes, janela de contexto e a blindagem contra
-chamadas de fundo indesejadas. As opções do lado do gateway estão em
+Como apontar o **Claude Code** (CLI) para o gateway. O caminho principal é o
+launcher `ocg claude`, que **não mexe em `~/.claude`**; se preferir o gateway em
+toda sessão, configure o `settings.json` uma vez (alternativa abaixo). O resto
+do arquivo cobre subagentes, janela de contexto e a blindagem contra chamadas
+de fundo indesejadas. As opções do lado do gateway estão em
 [Configuração](configuracao.md).
+
+## Caminho principal: `ocg claude`
+
+```bash
+ocg install    # uma vez: cria o config com auth_token gerado
+ocg claude     # sobe o daemon se preciso e abre o Claude Code apontado nele
+```
+
+O launcher escreve um `claude-settings.json` (0600, no data dir) com
+`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` e
+`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`, e roda `claude --settings
+<arquivo>`. Como `--settings` fica **acima** do `~/.claude/settings.json` na
+precedência, só aquela sessão usa o gateway: a configuração global do Claude
+continua intacta, inclusive o login da Anthropic em outras sessões. Argumentos
+extras passam direto (`ocg claude -- -p "oi"`, `ocg claude -- --resume`). Se o
+`config.toml` tiver `default_model`, ele vira `--model` — a menos que você já
+tenha passado um `--model`.
+
+O launcher segue a porta do daemon que ele mesmo gerencia (pidfile/port file),
+então `ocg --start --port 3940` é respeitado.
+
+## Alternativa: gateway fixo no `~/.claude/settings.json`
+
+Use quando quiser que **toda** sessão do Claude Code já nasça no gateway, sem
+passar pelo `ocg claude`. É uma edição explícita, sua, no arquivo global.
 
 ## Variáveis de ambiente
 

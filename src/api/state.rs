@@ -34,6 +34,9 @@ pub struct AppState {
     pub opencode: SharedOpenCode,
     /// `GET /usage` report cache (quota probes are upstream calls).
     pub usage: crate::api::usage::UsageCache,
+    /// Per-model token accounting that feeds `ocg --status`. In-memory here;
+    /// `serve()` loads it from disk and flushes it on a timer.
+    pub stats: crate::stats::UsageStats,
 }
 
 impl AppState {
@@ -58,7 +61,14 @@ impl AppState {
             http,
             opencode,
             usage: crate::api::usage::UsageCache::new(),
+            stats: crate::stats::UsageStats::in_memory(),
         }
+    }
+
+    /// Swap in the on-disk stats store (boot) without rebuilding the state.
+    pub fn with_stats(mut self, stats: crate::stats::UsageStats) -> Self {
+        self.stats = stats;
+        self
     }
 
     /// Upstream bearer for a catalog entry (inline key, pair credential or

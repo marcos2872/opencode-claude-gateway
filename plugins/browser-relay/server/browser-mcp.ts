@@ -182,7 +182,13 @@ async function callTool(tool: string, args: Record<string, unknown>): Promise<To
   // this server never takes the extension away from it.
   if (remote) {
     try {
-      return await callRemote(remote, tool, args)
+      const first = await callRemote(remote, tool, args)
+      if (first.ok || !first.error?.startsWith("relay recusou o token")) return first
+      // Stale token: re-read `relay.json` and retry once with the live one.
+      const fresh = await refreshRemote(remote)
+      if (!fresh) return first
+      remote = fresh
+      return await callRemote(fresh, tool, args)
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
@@ -416,6 +422,22 @@ async function discoverRemote(): Promise<RemoteRelay | null> {
   return info
 }
 
+/**
+ * Re-read `relay.json` after a failed call. The file is only read at boot, so
+ * a relay that restarted (new token, same port) or a stale file left by an
+ * earlier session would make every tool fail with `403 Forbidden` while the
+ * MCP still looked healthy. A fresh, live relay with a different token is
+ * picked up for the next call.
+ */
+async function refreshRemote(previous: RemoteRelay | null): Promise<RemoteRelay | null> {
+  const info = readRelayInfo()
+  if (!info) return null
+  if (previous && info.token === previous.token && info.port === previous.port) return null
+  if (!(await probeRelay(info.port))) return null
+  log(`relay mudou (porta ${info.port}); usando o token atual`)
+  return info
+}
+
 /** Chama a tool por HTTP no relay de outro processo. */
 async function callRemote(relay: RemoteRelay, tool: string, args: Record<string, unknown>) {
   const response = await fetch(`http://127.0.0.1:${relay.port}/tool`, {
@@ -424,6 +446,21 @@ async function callRemote(relay: RemoteRelay, tool: string, args: Record<string,
     body: JSON.stringify({ tool, args }),
     signal: AbortSignal.timeout(CALL_TIMEOUT_MS + 5_000),
   })
+  // The other process rejected the token: its `relay.json` was rewritten (a
+  // restart) or the file we read is from an older session. Surface a message
+  // the user can act on instead of a bare `403`.
+  if (response.status === 403) {
+    return {
+      ok: false as const,
+      error:
+        "relay recusou o token (403). O relay do OpenCode reiniciou e o relay.json mudou; " +
+        "rode a tool de novo (o token é relido) ou reinicie o OpenCode. Se persistir, " +
+        "apague o relay.json em $XDG_RUNTIME_DIR/opencode-browser/ e reabra o OpenCode.",
+    }
+  }
+  if (!response.ok) {
+    return { ok: false as const, error: `relay respondeu HTTP ${response.status}` }
+  }
   const data = (await response.json()) as unknown
   if (!isRecord(data)) throw new Error("resposta inválida do relay")
   if (data.ok === false) {

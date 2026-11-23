@@ -28,6 +28,7 @@ const MAX_REQUEST_BODY: usize = 64 * 1024 * 1024;
 pub fn router(state: AppState) -> Router {
     let app = Router::new()
         .route("/health", get(health))
+        .route("/status", get(status_report))
         .route("/usage", get(usage))
         .route("/v1/models", get(list_models))
         .route("/v1/messages/count_tokens", post(count_tokens))
@@ -91,6 +92,40 @@ async fn health(State(s): State<AppState>) -> impl IntoResponse {
         "models": model_count,
         "last_error": last_error,
     }))
+}
+
+/// `GET /status`: the running counters behind `ocg --status`. The CLI reads
+/// this when the daemon is up (in-memory totals are newer than the flushed
+/// file); guarded by the same `auth_token` as every other route.
+fn status_payload(s: &AppState) -> Value {
+    let snapshot = s.stats.snapshot(crate::stats::WINDOW_DAYS);
+    let rows: Vec<Value> = snapshot
+        .rows
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "gateway": r.gateway_model,
+                "ref": r.opencode_ref,
+                "requests": r.totals.requests,
+                "input": r.totals.input,
+                "output": r.totals.output,
+                "cached": r.totals.cached,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "window_days": crate::stats::WINDOW_DAYS,
+        "requests": snapshot.requests,
+        "input": snapshot.input,
+        "output": snapshot.output,
+        "cached": snapshot.cached,
+        "rows": rows,
+    })
+}
+
+async fn status_report(State(s): State<AppState>) -> impl IntoResponse {
+    Json(status_payload(&s))
 }
 
 async fn list_models(State(s): State<AppState>) -> impl IntoResponse {

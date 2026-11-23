@@ -312,11 +312,29 @@ pub(crate) async fn forward_anthropic(ctx: ForwardCtx<'_>) -> Response {
     if stream {
         // Byte passthrough, but inject `ping` during upstream silence so the
         // client's stream watchdog doesn't abort long thinking pauses.
-        let stream = with_heartbeat(
-            resp.bytes_stream()
-                .map(|c| c.map(|b| b.to_vec()).map_err(std::io::Error::other)),
-            HEARTBEAT_IDLE,
-        );
+        // Bytes stay identical; a scanner only reads `message_start` /
+        // `message_delta` usage for `ocg --status` on the way through, and
+        // records once when the stream ends.
+        let gw = gateway_model.to_string();
+        let opencode_ref = entry.qualified();
+        let stats = s.stats.clone();
+        let byte_stream = resp.bytes_stream();
+        let out = async_stream::stream! {
+            let mut scanner = AnthropicUsageScanner::default();
+            let mut pinned = Box::pin(byte_stream);
+            while let Some(chunk) = pinned.next().await {
+                if let Ok(bytes) = &chunk {
+                    scanner.observe(bytes);
+                }
+                yield chunk
+                    .map(|b| b.to_vec())
+                    .map_err(std::io::Error::other);
+            }
+            if scanner.seen {
+                stats.record(&gw, &opencode_ref, scanner.input, scanner.output, scanner.cached);
+            }
+        };
+        let stream = with_heartbeat(out, HEARTBEAT_IDLE);
         sse_stream_response(stream)
     } else {
         // Rewrite `model` to the gateway id for a consistent client view.
@@ -330,6 +348,22 @@ pub(crate) async fn forward_anthropic(ctx: ForwardCtx<'_>) -> Response {
         if let Some(uid) = v.get("id").and_then(|x| x.as_str()) {
             tracing::debug!(upstream_id = uid, model = gateway_model, "upstream ok");
         }
+        // The passthrough forwards `usage` verbatim; read its counters for
+        // `ocg --status` without touching the response.
+        let usage = v.get("usage");
+        s.stats.record(
+            gateway_model,
+            &entry.qualified(),
+            usage
+                .and_then(|u| u.get("input_tokens"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            usage
+                .and_then(|u| u.get("output_tokens"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            cached_input_tokens(usage),
+        );
         Json(v).into_response()
     }
 }
@@ -391,20 +425,26 @@ pub(crate) async fn forward_responses(ctx: ForwardCtx<'_>) -> Response {
         }
         // Prefix-cache accounting (0 = miss or upstream doesn't report).
         let usage = v.get("usage");
-        log_cache_usage(
-            gateway_model,
-            &entry.qualified(),
-            cached_input_tokens(usage),
+        let (input, output, cached) = (
             usage
                 .and_then(|u| u.get("input_tokens"))
                 .and_then(Value::as_u64)
                 .unwrap_or(0),
+            usage
+                .and_then(|u| u.get("output_tokens"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            cached_input_tokens(usage),
         );
+        log_cache_usage(gateway_model, &entry.qualified(), cached, input);
+        s.stats
+            .record(gateway_model, &entry.qualified(), input, output, cached);
         return Json(responses_to_anthropic(&v, gateway_model)).into_response();
     }
     // Translated streaming: Responses SSE -> Anthropic SSE.
     let gw = gateway_model.to_string();
     let opencode_ref = entry.qualified();
+    let stats = s.stats.clone();
     let byte_stream = resp.bytes_stream();
     let out = async_stream::stream! {
         let mut tr = ResponsesTranslator::new(&gw);
@@ -484,6 +524,7 @@ pub(crate) async fn forward_responses(ctx: ForwardCtx<'_>) -> Response {
             }
         }
         log_cache_usage(&gw, &opencode_ref, cache_read, input_tokens);
+        stats.record(&gw, &opencode_ref, input_tokens, output_tokens, cache_read);
         if let Some(msg) = upstream_error {
             yield Ok::<_, std::io::Error>(terminal_error_event(&msg).into_bytes());
         } else {
@@ -502,6 +543,56 @@ pub(crate) async fn forward_responses(ctx: ForwardCtx<'_>) -> Response {
         }
     };
     sse_stream_response(out)
+}
+
+/// Read-only SSE scanner for the Anthropic passthrough: the bytes go to the
+/// client untouched, but `message_start` / `message_delta` usage is collected
+/// so `ocg --status` can count tokens on that path too. Buffers at most one
+/// incomplete line; nothing is introduced into the stream.
+#[derive(Default)]
+struct AnthropicUsageScanner {
+    buf: Vec<u8>,
+    input: u64,
+    output: u64,
+    cached: u64,
+    seen: bool,
+}
+
+impl AnthropicUsageScanner {
+    /// Feed one chunk, keeping the counters (`message_start` carries input,
+    /// `message_delta` the final output; last value wins per field).
+    fn observe(&mut self, chunk: &[u8]) {
+        self.buf.extend_from_slice(chunk);
+        while let Some(pos) = self.buf.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = self.buf.drain(..=pos).collect();
+            let text = String::from_utf8_lossy(&line);
+            let Some(payload) = text.trim().strip_prefix("data:") else {
+                continue;
+            };
+            let Ok(v) = serde_json::from_str::<Value>(payload.trim()) else {
+                continue;
+            };
+            let usage = match v.get("type").and_then(Value::as_str) {
+                Some("message_start") => v.get("message").and_then(|m| m.get("usage")),
+                Some("message_delta") => v.get("usage"),
+                _ => None,
+            };
+            let Some(u) = usage else { continue };
+            if let Some(n) = u.get("input_tokens").and_then(Value::as_u64) {
+                self.input = self.input.max(n);
+                self.seen = true;
+            }
+            if let Some(n) = u.get("output_tokens").and_then(Value::as_u64) {
+                self.output = self.output.max(n);
+                self.seen = true;
+            }
+            let cached = cached_input_tokens(Some(u));
+            if cached > 0 {
+                self.cached = cached;
+                self.seen = true;
+            }
+        }
+    }
 }
 
 /// `response.incomplete.incomplete_details.reason`, when present.
@@ -586,20 +677,26 @@ pub(crate) async fn forward_openai(ctx: ForwardCtx<'_>) -> Response {
         }
         // Prefix-cache accounting (0 = miss or upstream doesn't report).
         let usage = v.get("usage");
-        log_cache_usage(
-            gateway_model,
-            &entry.qualified(),
-            cached_input_tokens(usage),
+        let (input, output, cached) = (
             usage
                 .and_then(|u| u.get("prompt_tokens"))
                 .and_then(Value::as_u64)
                 .unwrap_or(0),
+            usage
+                .and_then(|u| u.get("completion_tokens"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            cached_input_tokens(usage),
         );
+        log_cache_usage(gateway_model, &entry.qualified(), cached, input);
+        s.stats
+            .record(gateway_model, &entry.qualified(), input, output, cached);
         return Json(openai_to_anthropic(&v, gateway_model)).into_response();
     }
     // Translated streaming: OpenAI SSE -> Anthropic SSE.
     let gw = gateway_model.to_string();
     let opencode_ref = entry.qualified();
+    let stats = s.stats.clone();
     let byte_stream = resp.bytes_stream();
     let out = async_stream::stream! {
         let mut tr = StreamTranslator::new(&gw);
@@ -668,6 +765,7 @@ pub(crate) async fn forward_openai(ctx: ForwardCtx<'_>) -> Response {
             }
         }
         log_cache_usage(&gw, &opencode_ref, cache_read, input_tokens);
+        stats.record(&gw, &opencode_ref, input_tokens, output_tokens, cache_read);
         if let Some(msg) = upstream_error {
             // Anthropic terminal frame: an `error` event ends the stream; a
             // `message_stop` would pretend the turn completed successfully.

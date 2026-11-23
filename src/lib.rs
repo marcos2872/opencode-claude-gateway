@@ -5,3 +5,5 @@ pub mod config;
 pub mod daemon;
 pub mod domain;
 pub mod infra;
+pub mod install;
+pub mod stats;

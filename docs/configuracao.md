@@ -11,14 +11,56 @@ como o gateway resolve modelos e aliases.
 
 Arquivo: `~/.config/opencode-claude-gateway/config.toml` (veja
 [`config.example.toml`](../config.example.toml)).
-**No primeiro run** o arquivo é criado automaticamente com todas as opções
-comentadas (0600) — descomente e edite o que precisar. Paths informados via
-`--config`/`OCG_CONFIG` não são criados (se não existir, valem os defaults).
+**`ocg install`** cria esse arquivo (0600) já com um `auth_token` gerado e o
+bloco de aliases que fixa a família **comentado** — descomente o que quiser.
+Sem `ocg install` (ou num path via `--config`/`OCG_CONFIG` que ainda não
+existe), o primeiro run cria o arquivo com todas as opções comentadas.
+O `install` respeita `--config`/`OCG_CONFIG`; num arquivo existente ele não
+sobrescreve sem `--force` (que deixa um `.bak` datado).
 Overrides por env: `OCG_PORT`, `OCG_AUTH_TOKEN`, `OCG_CONFIG`.
 `OCG_AUTH_TOKEN` (quando não-vazio) sobrescreve o `auth_token` do arquivo.
 
 O config é lido **no boot** — mudanças exigem reiniciar o gateway
 (`ocg --stop && ocg --start`).
+
+## Instalação em um comando (`ocg install`)
+
+```bash
+ocg install                        # config com token + aliases comentados
+ocg install --agent-usage          # + mod de cota (alias: --agent-use)
+ocg install --browser              # + browser-relay (precisa de bun)
+ocg install --force                # regrava o config (backup .bak)
+ocg install --local . --agent-usage  # plugins da pasta do repo (dev)
+```
+
+Os plugins vêm do marketplace do repositório
+(`claude plugin install <nome> --marketplace marcos2872/opencode-claude-gateway`),
+com `base_url`/`auth_token` já fixados no plugin. O `install` **não** sobe o
+daemon nem mexe no `~/.claude`: ele termina imprimindo os próximos comandos
+(`ocg --start`, `ocg claude`).
+
+## Status e uso por modelo (`ocg --status`)
+
+`ocg --status` mostra a saúde do daemon e os modelos mais usados nos
+**últimos 7 dias**, por tokens (entrada + saída reportados pelo upstream),
+com a participação de cada um no total e a conversão do alias:
+
+```
+ocg 0.4.1 · running (pid 4821, port 3737, healthy) · up 3h12m
+auto-start: enabled
+
+Most used models · last 7 days · 4.20M tokens · 1.20M cached
+  claude-sonnet-5 → opencode-go/deepseek-v4.1-flash           58.3% ... 2.45M 312 req
+  claude-opus-5 → github-copilot/gpt-6-luna                   22.1% ... 930K  138 req
+```
+
+Os contadores são gravados nos forwards bem-sucedidos (2xx), com o `usage`
+que o upstream reportou — upstreams que não reportam `usage` contam 0 tokens
+(as requisições continuam contadas). Ficam em
+`~/.local/share/opencode-claude-gateway/ocg.stats.json` (0600, buckets por dia
+UTC; `OCG_STATS_FILE` muda o caminho), persistidos a cada minuto e no
+shutdown. Com o daemon no ar, o status lê `GET /status` (memória, mais novo);
+com ele parado, lê o arquivo.
 
 ## Auto-start no login (`--enable` / `--disable`)
 
@@ -45,12 +87,13 @@ Por padrão `auth_token = ""`: o gateway aceita qualquer credencial
 (aceitável porque ele só escuta em `127.0.0.1`). Para exigir credencial:
 
 ```bash
-# 1. Gere um token
+# 1. Gere um token (ou deixe o `ocg install` gerar por você)
 openssl rand -hex 32
 
 # 2. Salve no config do gateway (arquivo criado no primeiro run)
 # edite ~/.config/opencode-claude-gateway/config.toml:
 #   auth_token = "SEU_TOKEN_AQUI"
+# (o `ocg install` já cria o arquivo com um token gerado)
 
 # 3. Reinicie o gateway para valer (o config é lido no boot)
 ocg --stop
